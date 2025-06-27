@@ -54,10 +54,21 @@ public class OracleToPgMigrator {
             if (!blacklist.contains(tabelle)) {
                 Logger.info("Beginne Migration der Tabelle: " + tabelle);
                 migrierenTabelle(tabelle);
+                tableMigrated(tabelle);
             } else {
                 Logger.info("Überspringe Tabelle (in Blacklist): " + tabelle);
             }
         }
+    }
+    
+    /**
+     * Wird aufgerufen, wenn eine Tabelle migriert wurde.
+     * Kann in Unterklassen überschrieben werden, um den Fortschritt zu verfolgen.
+     * 
+     * @param tabelle Der Name der migrierten Tabelle
+     */
+    protected void tableMigrated(String tabelle) {
+        // Standardimplementierung tut nichts
     }
     
     /**
@@ -203,6 +214,101 @@ public class OracleToPgMigrator {
                 if (!pkSpalten.isEmpty()) {
                     String pkDef = "    CONSTRAINT " + pkName + " PRIMARY KEY (" + String.join(", ", pkSpalten) + ")";
                     spaltenDefinitionen.add(pkDef);
+                }
+            }
+        }
+        
+        // Fremdschlüssel hinzufügen
+        try (ResultSet fkRs = oracleConnection.getMetaData().getImportedKeys(null, null, tabellenname.toUpperCase())) {
+            Map<String, List<String[]>> fremdschlüssel = new HashMap<>();
+            
+            while (fkRs.next()) {
+                String fkName = fkRs.getString("FK_NAME");
+                String spaltenName = fkRs.getString("FKCOLUMN_NAME");
+                String pkTabelle = fkRs.getString("PKTABLE_NAME");
+                String pkSpalte = fkRs.getString("PKCOLUMN_NAME");
+                short updateRule = fkRs.getShort("UPDATE_RULE");
+                short deleteRule = fkRs.getShort("DELETE_RULE");
+                
+                // Ignorierte Spalten auch beim Fremdschlüssel überspringen
+                if (ignorierteSpalten.contains(spaltenName)) {
+                    continue;
+                }
+                
+                if (!fremdschlüssel.containsKey(fkName)) {
+                    fremdschlüssel.put(fkName, new ArrayList<>());
+                }
+                
+                // Spalteninformationen und Referenzinformationen speichern
+                fremdschlüssel.get(fkName).add(new String[] { spaltenName, pkTabelle, pkSpalte, 
+                                                             String.valueOf(updateRule), String.valueOf(deleteRule) });
+            }
+            
+            // Fremdschlüsseldefinitionen hinzufügen
+            for (String fkName : fremdschlüssel.keySet()) {
+                List<String[]> fkSpalten = fremdschlüssel.get(fkName);
+                if (!fkSpalten.isEmpty()) {
+                    // Fremdschlüsselspalten und Referenzspalten sammeln
+                    List<String> fkSpaltenNamen = new ArrayList<>();
+                    String pkTabelle = fkSpalten.get(0)[1]; // Erste Referenztabelle nehmen (sollte für alle gleich sein)
+                    List<String> pkSpaltenNamen = new ArrayList<>();
+                    
+                    // ON UPDATE/DELETE Regeln bestimmen (sollten für alle Spalten des FK gleich sein)
+                    short updateRule = Short.parseShort(fkSpalten.get(0)[3]);
+                    short deleteRule = Short.parseShort(fkSpalten.get(0)[4]);
+                    
+                    for (String[] fkInfo : fkSpalten) {
+                        fkSpaltenNamen.add(fkInfo[0]);
+                        pkSpaltenNamen.add(fkInfo[2]);
+                    }
+                    
+                    // Fremdschlüssel-Constraint erstellen
+                    StringBuilder fkDef = new StringBuilder();
+                    fkDef.append("    CONSTRAINT ").append(fkName)
+                         .append(" FOREIGN KEY (").append(String.join(", ", fkSpaltenNamen)).append(")")
+                         .append(" REFERENCES ").append(pkTabelle)
+                         .append(" (").append(String.join(", ", pkSpaltenNamen)).append(")");
+                    
+                    // ON DELETE Regel hinzufügen
+                    switch (deleteRule) {
+                        case DatabaseMetaData.importedKeyCascade:
+                            fkDef.append(" ON DELETE CASCADE");
+                            break;
+                        case DatabaseMetaData.importedKeySetNull:
+                            fkDef.append(" ON DELETE SET NULL");
+                            break;
+                        case DatabaseMetaData.importedKeySetDefault:
+                            fkDef.append(" ON DELETE SET DEFAULT");
+                            break;
+                        case DatabaseMetaData.importedKeyRestrict:
+                            fkDef.append(" ON DELETE RESTRICT");
+                            break;
+                        case DatabaseMetaData.importedKeyNoAction:
+                            fkDef.append(" ON DELETE NO ACTION");
+                            break;
+                    }
+                    
+                    // ON UPDATE Regel hinzufügen
+                    switch (updateRule) {
+                        case DatabaseMetaData.importedKeyCascade:
+                            fkDef.append(" ON UPDATE CASCADE");
+                            break;
+                        case DatabaseMetaData.importedKeySetNull:
+                            fkDef.append(" ON UPDATE SET NULL");
+                            break;
+                        case DatabaseMetaData.importedKeySetDefault:
+                            fkDef.append(" ON UPDATE SET DEFAULT");
+                            break;
+                        case DatabaseMetaData.importedKeyRestrict:
+                            fkDef.append(" ON UPDATE RESTRICT");
+                            break;
+                        case DatabaseMetaData.importedKeyNoAction:
+                            fkDef.append(" ON UPDATE NO ACTION");
+                            break;
+                    }
+                    
+                    spaltenDefinitionen.add(fkDef.toString());
+                    Logger.info("Fremdschlüssel erkannt: " + fkName + ", referenziert " + pkTabelle);
                 }
             }
         }
@@ -417,5 +523,91 @@ public class OracleToPgMigrator {
             writer.print(sql);
         }
         Logger.info("SQL-Datei gespeichert: " + pfad);
+    }
+    
+    /**
+     * Gibt eine Übersicht aller Fremdschlüssel für eine Tabelle zurück.
+     * 
+     * @param tabellenname Der Name der Tabelle
+     * @return Eine Map mit Fremdschlüsselnamen und deren Details
+     * @throws SQLException Bei Datenbankfehlern
+     */
+    public Map<String, List<Map<String, String>>> getFremdschlüsselInfo(String tabellenname) throws SQLException {
+        Map<String, List<Map<String, String>>> fremdschlüsselInfos = new HashMap<>();
+        
+        try (ResultSet fkRs = oracleConnection.getMetaData().getImportedKeys(null, null, tabellenname.toUpperCase())) {
+            while (fkRs.next()) {
+                String fkName = fkRs.getString("FK_NAME");
+                String spaltenName = fkRs.getString("FKCOLUMN_NAME");
+                String pkTabelle = fkRs.getString("PKTABLE_NAME");
+                String pkSpalte = fkRs.getString("PKCOLUMN_NAME");
+                short updateRule = fkRs.getShort("UPDATE_RULE");
+                short deleteRule = fkRs.getShort("DELETE_RULE");
+                
+                if (!fremdschlüsselInfos.containsKey(fkName)) {
+                    fremdschlüsselInfos.put(fkName, new ArrayList<>());
+                }
+                
+                Map<String, String> spaltenInfo = new HashMap<>();
+                spaltenInfo.put("quellSpalte", spaltenName);
+                spaltenInfo.put("zielTabelle", pkTabelle);
+                spaltenInfo.put("zielSpalte", pkSpalte);
+                spaltenInfo.put("updateRegel", getFkRuleAsString(updateRule));
+                spaltenInfo.put("deleteRegel", getFkRuleAsString(deleteRule));
+                
+                fremdschlüsselInfos.get(fkName).add(spaltenInfo);
+            }
+        }
+        
+        return fremdschlüsselInfos;
+    }
+    
+    /**
+     * Konvertiert eine Fremdschlüsselregel in einen lesbaren String.
+     * 
+     * @param rule Die Regelkonstante aus DatabaseMetaData
+     * @return Der lesbare Name der Regel
+     */
+    private String getFkRuleAsString(short rule) {
+        switch (rule) {
+            case DatabaseMetaData.importedKeyCascade:
+                return "CASCADE";
+            case DatabaseMetaData.importedKeySetNull:
+                return "SET NULL";
+            case DatabaseMetaData.importedKeySetDefault:
+                return "SET DEFAULT";
+            case DatabaseMetaData.importedKeyRestrict:
+                return "RESTRICT";
+            case DatabaseMetaData.importedKeyNoAction:
+                return "NO ACTION";
+            default:
+                return "UNKNOWN";
+        }
+    }
+    
+    /**
+     * Gibt eine Übersicht aller Primärschlüssel für eine Tabelle zurück.
+     * 
+     * @param tabellenname Der Name der Tabelle
+     * @return Eine Map mit Primärschlüsselnamen und deren Spalten
+     * @throws SQLException Bei Datenbankfehlern
+     */
+    public Map<String, List<String>> getPrimärschlüsselInfo(String tabellenname) throws SQLException {
+        Map<String, List<String>> primärschlüsselInfos = new HashMap<>();
+        
+        try (ResultSet pkRs = oracleConnection.getMetaData().getPrimaryKeys(null, null, tabellenname.toUpperCase())) {
+            while (pkRs.next()) {
+                String pkName = pkRs.getString("PK_NAME");
+                String spaltenName = pkRs.getString("COLUMN_NAME");
+                
+                if (!primärschlüsselInfos.containsKey(pkName)) {
+                    primärschlüsselInfos.put(pkName, new ArrayList<>());
+                }
+                
+                primärschlüsselInfos.get(pkName).add(spaltenName);
+            }
+        }
+        
+        return primärschlüsselInfos;
     }
 }
