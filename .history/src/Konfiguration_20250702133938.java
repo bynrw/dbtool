@@ -82,9 +82,6 @@ public class Konfiguration {
         // Ausgabepfad einlesen
         ausgabePfad = props.getProperty("ausgabe.pfad", "./output/");
         
-        // Option für alle Tabellen einlesen
-        alleTabellen = Boolean.parseBoolean(props.getProperty("tabellen.alle", "false"));
-        
         // Whitelist und Blacklist einlesen
         whitelist = leseListeEin(props, "tabellen.whitelist");
         blacklist = leseListeEin(props, "tabellen.blacklist");
@@ -167,6 +164,9 @@ public class Konfiguration {
         indexPrefix = props.getProperty("index.prefix", "idx_");
         sequenceSuffix = props.getProperty("sequence.suffix", "_seq");
         constraintPrefix = props.getProperty("constraint.prefix", "");
+        
+        // Option für automatische Tabellenerkennung
+        alleTabellen = Boolean.parseBoolean(props.getProperty("migration.alle_tabellen", "false"));
     }
     
     /**
@@ -196,7 +196,6 @@ public class Konfiguration {
     
     public List<String> getWhitelist() { return whitelist; }
     public List<String> getBlacklist() { return blacklist; }
-    public boolean getAlleTabellen() { return alleTabellen; }
     
     public Map<String, List<String>> getIgnorierteSpalten() { return ignorierteSpalten; }
     public List<String> getIgnorierteSpalten(String tabelle) {

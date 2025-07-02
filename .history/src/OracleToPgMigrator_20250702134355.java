@@ -1031,29 +1031,4 @@ public class OracleToPgMigrator {
         
         return pgSQL;
     }
-    
-    /**
-     * Ermittelt alle Tabellen der aktuellen Oracle-Datenbank.
-     * 
-     * @return Liste aller Tabellennamen
-     * @throws SQLException Bei Datenbankfehlern
-     */
-    private List<String> ermittleAlleTabellen() throws SQLException {
-        List<String> alleTabellen = new ArrayList<>();
-        
-        String tabellenQuery = "SELECT table_name FROM user_tables ORDER BY table_name";
-        
-        try (Statement stmt = oracleConnection.createStatement();
-             ResultSet rs = stmt.executeQuery(tabellenQuery)) {
-            
-            while (rs.next()) {
-                String tabellenName = rs.getString("table_name");
-                alleTabellen.add(tabellenName);
-                Logger.info("Tabelle gefunden: " + tabellenName);
-            }
-        }
-        
-        Logger.info("Insgesamt " + alleTabellen.size() + " Tabellen in der Oracle-Datenbank gefunden");
-        return alleTabellen;
-    }
 }

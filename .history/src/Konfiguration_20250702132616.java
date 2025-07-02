@@ -42,9 +42,6 @@ public class Konfiguration {
     // Liste exakter Spaltennamen, die als Boolean behandelt werden sollen
     private List<String> booleanNamen;
     
-    // Option für automatische Tabellenerkennung
-    private boolean alleTabellen;
-    
     // Neue Eigenschaften für erweiterte Migration
     private boolean migrierenIndizes;
     private boolean migrierenSequenzen;
@@ -81,9 +78,6 @@ public class Konfiguration {
         
         // Ausgabepfad einlesen
         ausgabePfad = props.getProperty("ausgabe.pfad", "./output/");
-        
-        // Option für alle Tabellen einlesen
-        alleTabellen = Boolean.parseBoolean(props.getProperty("tabellen.alle", "false"));
         
         // Whitelist und Blacklist einlesen
         whitelist = leseListeEin(props, "tabellen.whitelist");
@@ -196,7 +190,6 @@ public class Konfiguration {
     
     public List<String> getWhitelist() { return whitelist; }
     public List<String> getBlacklist() { return blacklist; }
-    public boolean getAlleTabellen() { return alleTabellen; }
     
     public Map<String, List<String>> getIgnorierteSpalten() { return ignorierteSpalten; }
     public List<String> getIgnorierteSpalten(String tabelle) {
@@ -260,8 +253,19 @@ public class Konfiguration {
         
         return false;
     }
-
-    public boolean isAlleTabellen() {
-        return alleTabellen;
-    }
+    
+    // Getter-Methoden für die neuen Eigenschaften
+    public boolean getMigrierenIndizes() { return migrierenIndizes; }
+    public boolean getMigrierenSequenzen() { return migrierenSequenzen; }
+    public boolean getMigrierenViews() { return migrierenViews; }
+    public boolean getMigrierenTriggers() { return migrierenTriggers; }
+    public boolean getMigrierenFunktionen() { return migrierenFunktionen; }
+    public boolean getMigrierenProzeduren() { return migrierenProzeduren; }
+    public boolean getMigrierenSynonyme() { return migrierenSynonyme; }
+    public boolean getMigrierenConstraints() { return migrierenConstraints; }
+    
+    public String getSchemaMapping() { return schemaMapping; }
+    public String getIndexPrefix() { return indexPrefix; }
+    public String getSequenceSuffix() { return sequenceSuffix; }
+    public String getConstraintPrefix() { return constraintPrefix; }
 }

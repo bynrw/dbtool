@@ -42,9 +42,6 @@ public class Konfiguration {
     // Liste exakter Spaltennamen, die als Boolean behandelt werden sollen
     private List<String> booleanNamen;
     
-    // Option für automatische Tabellenerkennung
-    private boolean alleTabellen;
-    
     // Neue Eigenschaften für erweiterte Migration
     private boolean migrierenIndizes;
     private boolean migrierenSequenzen;
@@ -81,9 +78,6 @@ public class Konfiguration {
         
         // Ausgabepfad einlesen
         ausgabePfad = props.getProperty("ausgabe.pfad", "./output/");
-        
-        // Option für alle Tabellen einlesen
-        alleTabellen = Boolean.parseBoolean(props.getProperty("tabellen.alle", "false"));
         
         // Whitelist und Blacklist einlesen
         whitelist = leseListeEin(props, "tabellen.whitelist");
@@ -147,26 +141,33 @@ public class Konfiguration {
             }
         }
         
-        // Boolean-Spalten-Konfiguration einlesen
+        // Boolean-Präfixe einlesen
         booleanPraefixe = leseListeEin(props, "spalte.praefixe.boolean");
+        // Boolean-Suffixe einlesen
         booleanSuffixe = leseListeEin(props, "spalte.suffixe.boolean");
+        // Exakte Boolean-Spaltennamen einlesen
         booleanNamen = leseListeEin(props, "spalte.namen.boolean");
         
-        // Erweiterte Migration-Optionen einlesen
-        migrierenIndizes = Boolean.parseBoolean(props.getProperty("migration.indizes", "true"));
-        migrierenSequenzen = Boolean.parseBoolean(props.getProperty("migration.sequenzen", "true"));
-        migrierenViews = Boolean.parseBoolean(props.getProperty("migration.views", "true"));
-        migrierenTriggers = Boolean.parseBoolean(props.getProperty("migration.triggers", "false"));
-        migrierenFunktionen = Boolean.parseBoolean(props.getProperty("migration.funktionen", "false"));
-        migrierenProzeduren = Boolean.parseBoolean(props.getProperty("migration.prozeduren", "false"));
-        migrierenSynonyme = Boolean.parseBoolean(props.getProperty("migration.synonyme", "false"));
-        migrierenConstraints = Boolean.parseBoolean(props.getProperty("migration.constraints", "true"));
+        // Standard-Präfixe hinzufügen, falls nicht in Konfiguration definiert
+        if (booleanPraefixe.isEmpty()) {
+            booleanPraefixe.add("ist");
+        }
+        
+        // Erweiterte Migrationsoptionen einlesen
+        migrierenIndizes = Boolean.parseBoolean(props.getProperty("migrieren.indizes", "false"));
+        migrierenSequenzen = Boolean.parseBoolean(props.getProperty("migrieren.sequenzen", "false"));
+        migrierenViews = Boolean.parseBoolean(props.getProperty("migrieren.views", "false"));
+        migrierenTriggers = Boolean.parseBoolean(props.getProperty("migrieren.triggers", "false"));
+        migrierenFunktionen = Boolean.parseBoolean(props.getProperty("migrieren.funktionen", "false"));
+        migrierenProzeduren = Boolean.parseBoolean(props.getProperty("migrieren.prozeduren", "false"));
+        migrierenSynonyme = Boolean.parseBoolean(props.getProperty("migrieren.synonyme", "false"));
+        migrierenConstraints = Boolean.parseBoolean(props.getProperty("migrieren.constraints", "false"));
         
         // Namens-Mappings einlesen
         schemaMapping = props.getProperty("schema.mapping", "");
         indexPrefix = props.getProperty("index.prefix", "idx_");
         sequenceSuffix = props.getProperty("sequence.suffix", "_seq");
-        constraintPrefix = props.getProperty("constraint.prefix", "");
+        constraintPrefix = props.getProperty("constraint.prefix", "fk_");
     }
     
     /**
@@ -196,7 +197,6 @@ public class Konfiguration {
     
     public List<String> getWhitelist() { return whitelist; }
     public List<String> getBlacklist() { return blacklist; }
-    public boolean getAlleTabellen() { return alleTabellen; }
     
     public Map<String, List<String>> getIgnorierteSpalten() { return ignorierteSpalten; }
     public List<String> getIgnorierteSpalten(String tabelle) {
@@ -259,9 +259,5 @@ public class Konfiguration {
         }
         
         return false;
-    }
-
-    public boolean isAlleTabellen() {
-        return alleTabellen;
     }
 }

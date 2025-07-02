@@ -196,7 +196,6 @@ public class Konfiguration {
     
     public List<String> getWhitelist() { return whitelist; }
     public List<String> getBlacklist() { return blacklist; }
-    public boolean getAlleTabellen() { return alleTabellen; }
     
     public Map<String, List<String>> getIgnorierteSpalten() { return ignorierteSpalten; }
     public List<String> getIgnorierteSpalten(String tabelle) {

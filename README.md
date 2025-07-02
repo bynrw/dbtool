@@ -1,6 +1,19 @@
 # Oracle zu PostgreSQL Migrationstool
 
-Dieses Java-Tool migriert Tabellen von einer Oracle-Datenbank zu PostgreSQL, indem es SQL-Skripte für CREATE TABLE und INSERT-Statements erzeugt.
+Dieses Java-Tool migriert komplette Oracle-Datenbanken zu PostgreSQL, indem es SQL-Skripte für alle Datenbankobjekte erzeugt.
+
+## Funktionen
+
+Das Tool migriert folgende Datenbankobjekte:
+- **Tabellen** (Struktur und Daten)
+- **Indizes** (einschließlich Unique-Indizes)
+- **Sequenzen** (mit korrekten Start- und Increment-Werten)
+- **Views** (mit automatischer SQL-Konvertierung)
+- **Triggers** (Dokumentation für manuelle Anpassung)
+- **Funktionen** (Dokumentation für manuelle Anpassung)
+- **Prozeduren** (Dokumentation für manuelle Anpassung)
+- **Synonyme** (als Views implementiert)
+- **Constraints** (Primary Keys, Foreign Keys)
 
 ## Anforderungen
 
@@ -29,6 +42,27 @@ javac -cp "lib/*" -d bin src/*.java
 java -cp "bin;lib/*" Main pfad/zur/konfigurationsdatei.properties
 ```
 
+## Schnellstart
+
+1. **Einfachste Verwendung** (alle Tabellen migrieren):
+   ```properties
+   # In config.properties:
+   tabellen.alle=true
+   tabellen.blacklist=TEMP_%,BACKUP_%,SYS_%
+   ```
+
+2. **Selektive Migration** (nur bestimmte Tabellen):
+   ```properties
+   # In config.properties:
+   tabellen.alle=false
+   tabellen.whitelist=KUNDEN,BESTELLUNGEN,PRODUKTE
+   ```
+
+3. **Tool ausführen**:
+   ```bash
+   java -cp "bin;lib/*" Main config.properties
+   ```
+
 ## Konfiguration
 
 Die Konfiguration erfolgt über eine Properties-Datei mit folgenden Einstellungen:
@@ -48,15 +82,20 @@ postgres.passwort=postgres
 ### Tabellen-Konfiguration
 
 ```
-# Tabellen für Migration (durch Kommas getrennt)
-tabellen.whitelist=KUNDEN,BESTELLUNGEN,PRODUKTE
+# Automatische Erkennung aller Tabellen (empfohlen)
+tabellen.alle=true
+
+# Alternative: Manuelle Whitelist (nur wenn tabellen.alle=false)
+# tabellen.whitelist=KUNDEN,BESTELLUNGEN,PRODUKTE
 
 # Tabellen, die von der Migration ausgeschlossen werden sollen
-tabellen.blacklist=TEMP_TABELLE,BACKUP_TABELLE
+tabellen.blacklist=TEMP_TABELLE,BACKUP_TABELLE,SYS_%
 
 # Spalten, die pro Tabelle ignoriert werden sollen
 tabelle.KUNDEN.ignorierte_spalten=LETZTE_AKTUALISIERUNG,INTERNE_ID
 ```
+
+**Empfehlung**: Verwenden Sie `tabellen.alle=true` und definieren Sie nur die Tabellen in der `blacklist`, die Sie **nicht** migrieren möchten. Das Tool erkennt automatisch alle Tabellen in Ihrer Oracle-Datenbank.
 
 ### Datentyp-Mappings und Transformationen
 
@@ -68,13 +107,56 @@ datentyp.mapping=NUMBER(1)->BOOLEAN;VARCHAR2->VARCHAR;CLOB->TEXT
 transform.NUMBER_1_=0->false;1->true
 ```
 
+### Erweiterte Migrations-Optionen
+
+```
+# Konfiguration welche Objekte migriert werden sollen
+migration.indizes=true
+migration.sequenzen=true
+migration.views=true
+migration.triggers=false
+migration.funktionen=false
+migration.prozeduren=false
+migration.synonyme=false
+migration.constraints=true
+
+# Namens-Mappings für PostgreSQL
+schema.mapping=
+index.prefix=idx_
+sequence.suffix=_seq
+constraint.prefix=
+```
+
 ## Ausgabe
 
-Das Tool erzeugt für jede Tabelle zwei Dateien im konfigurierten Ausgabeverzeichnis:
+Das Tool erzeugt separate SQL-Dateien für jeden Objekttyp:
 
-1. `<tabellenname>_create.sql`: SQL für die Tabellendefinition in PostgreSQL
-2. `<tabellenname>_inserts.sql`: INSERT-Statements für alle Datenzeilen
+- `<tabelle>_create.sql` - Tabellendefinitionen
+- `<tabelle>_inserts.sql` - Datenimport-Statements
+- `indizes.sql` - Alle Indizes
+- `sequenzen.sql` - Alle Sequenzen
+- `views.sql` - Alle Views
+- `triggers.sql` - Trigger-Dokumentation (manuell anzupassen)
+- `funktionen.sql` - Funktions-Dokumentation (manuell anzupassen)
+- `prozeduren.sql` - Prozedur-Dokumentation (manuell anzupassen)
+- `synonyme.sql` - Synonyme als Views implementiert
 
-## Logdateien
+## Hinweise zur Migration
 
-Logdateien werden im `logs`-Verzeichnis abgelegt und enthalten detaillierte Informationen über den Migrationsprozess.
+### Automatisch konvertiert:
+- Tabellen und Daten
+- Indizes und Constraints
+- Sequenzen mit korrekten Werten
+- Views (grundlegende SQL-Konvertierung)
+
+### Manuelle Anpassung erforderlich:
+- **Triggers**: Oracle PL/SQL → PostgreSQL PL/pgSQL
+- **Funktionen**: Oracle PL/SQL → PostgreSQL PL/pgSQL  
+- **Prozeduren**: Oracle PL/SQL → PostgreSQL PL/pgSQL
+- **Komplexe Views**: Spezielle Oracle-Funktionen
+
+### SQL-Konvertierungen (automatisch):
+- `NVL()` → `COALESCE()`
+- `SYSDATE` → `CURRENT_TIMESTAMP`
+- `ROWNUM` → `ROW_NUMBER() OVER()`
+- Oracle-Datentypen → PostgreSQL-Datentypen

@@ -42,9 +42,6 @@ public class Konfiguration {
     // Liste exakter Spaltennamen, die als Boolean behandelt werden sollen
     private List<String> booleanNamen;
     
-    // Option für automatische Tabellenerkennung
-    private boolean alleTabellen;
-    
     // Neue Eigenschaften für erweiterte Migration
     private boolean migrierenIndizes;
     private boolean migrierenSequenzen;
@@ -81,9 +78,6 @@ public class Konfiguration {
         
         // Ausgabepfad einlesen
         ausgabePfad = props.getProperty("ausgabe.pfad", "./output/");
-        
-        // Option für alle Tabellen einlesen
-        alleTabellen = Boolean.parseBoolean(props.getProperty("tabellen.alle", "false"));
         
         // Whitelist und Blacklist einlesen
         whitelist = leseListeEin(props, "tabellen.whitelist");
@@ -196,7 +190,6 @@ public class Konfiguration {
     
     public List<String> getWhitelist() { return whitelist; }
     public List<String> getBlacklist() { return blacklist; }
-    public boolean getAlleTabellen() { return alleTabellen; }
     
     public Map<String, List<String>> getIgnorierteSpalten() { return ignorierteSpalten; }
     public List<String> getIgnorierteSpalten(String tabelle) {
@@ -259,9 +252,5 @@ public class Konfiguration {
         }
         
         return false;
-    }
-
-    public boolean isAlleTabellen() {
-        return alleTabellen;
     }
 }
