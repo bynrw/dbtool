@@ -332,48 +332,61 @@ public class OracleToPgMigrator {
     private String mappeOracleZuPostgresDatentyp(String oracleDatentyp, String spaltenName) {
         Map<String, String> mapping = konfiguration.getDatentypMapping();
         
-        // Exakte Übereinstimmung prüfen
+        // Spezielle Behandlung für NUMBER-Typen
+        if (oracleDatentyp.startsWith("NUMBER(")) {
+            // Extrahiere Precision und Scale aus NUMBER(p,s)
+            String zahlenTeil = oracleDatentyp.substring(7, oracleDatentyp.length() - 1);
+            String[] teile = zahlenTeil.split(",");
+            
+            if (teile.length >= 2) {
+                try {
+                    int precision = Integer.parseInt(teile[0].trim());
+                    int scale = Integer.parseInt(teile[1].trim());
+                    
+                    // NUMBER(1,0) -> BOOLEAN (spezifisch)
+                    if (precision == 1 && scale == 0) {
+                        return "BOOLEAN";
+                    }
+                    
+                    // Alle anderen NUMBER-Felder mit Scale 0 -> BIGINT
+                    if (scale == 0) {
+                        return "BIGINT";
+                    }
+                    
+                    // NUMBER-Felder mit Dezimalstellen -> NUMERIC
+                    return "NUMERIC";
+                    
+                } catch (NumberFormatException e) {
+                    Logger.info("Fehler beim Parsen von NUMBER-Typ: " + oracleDatentyp);
+                }
+            }
+            
+            // Für NUMBER(p) ohne Scale - behandle als Scale 0
+            if (teile.length == 1) {
+                // Alle NUMBER(p) -> BIGINT
+                return "BIGINT";
+            }
+        }
+        
+        // Behandle einfaches NUMBER ohne Klammern
+        if (oracleDatentyp.equals("NUMBER")) {
+            return "BIGINT";
+        }
+        
+        // Exakte Übereinstimmung aus Properties prüfen
         if (mapping.containsKey(oracleDatentyp)) {
             return mapping.get(oracleDatentyp);
         }
         
-        // Standardmappings für häufige Typen
-        if (oracleDatentyp.startsWith("NUMBER(1)")) {
-            return "BOOLEAN";
-        } else if (oracleDatentyp.startsWith("NUMBER")) {
-            // Prüfen auf NUMBER(p,s)
-            if (oracleDatentyp.contains(",")) {
-                return "NUMERIC" + oracleDatentyp.substring(6); // NUMBER(p,s) -> NUMERIC(p,s)
-            } else if (oracleDatentyp.contains("(")) {
-                int precision = Integer.parseInt(oracleDatentyp.replaceAll("[^0-9]", ""));
-                if (precision <= 4) {
-                    return "SMALLINT";
-                } else if (precision <= 9) {
-                    return "INTEGER";
-                } else if (precision <= 18) {
-                    return "BIGINT";
-                } else {
-                    return "NUMERIC" + oracleDatentyp.substring(6); // NUMBER(p) -> NUMERIC(p)
-                }
-            } else {
-                return "NUMERIC"; // Einfaches NUMBER ohne Argumente
-            }
-        } else if (oracleDatentyp.startsWith("VARCHAR2")) {
+        // Standardmappings für andere Typen
+        if (oracleDatentyp.startsWith("VARCHAR2")) {
             return "VARCHAR" + oracleDatentyp.substring(7); // VARCHAR2(n) -> VARCHAR(n)
         } else if (oracleDatentyp.startsWith("CHAR")) {
             return oracleDatentyp; // CHAR(n) bleibt CHAR(n)
-        } else if (oracleDatentyp.equals("DATE")) {
-            return "DATE";
-        } else if (oracleDatentyp.startsWith("TIMESTAMP")) {
-            return oracleDatentyp; // TIMESTAMP bleibt TIMESTAMP
-        } else if (oracleDatentyp.equals("CLOB")) {
-            return "TEXT";
-        } else if (oracleDatentyp.equals("BLOB")) {
-            return "BYTEA";
         }
         
         // Fallback für nicht erkannte Typen
-        Logger.warnung("Unbekannter Datentyp: " + oracleDatentyp + ", verwende TEXT als Standard");
+        Logger.info("Unbekannter Datentyp: " + oracleDatentyp + ", verwende TEXT als Standard");
         return "TEXT";
     }
     
