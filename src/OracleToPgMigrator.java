@@ -568,20 +568,57 @@ public class OracleToPgMigrator {
         sqlBuilder.append("-- Überlauf-Schutz für PostgreSQL implementiert\n\n");
         
         // PostgreSQL BIGINT Grenzen
-        final long PG_BIGINT_MIN = -9223372036854775808L;
-        final long PG_BIGINT_MAX = 9223372036854775807L;
+        final long PG_BIGINT_MIN = -9223372036854775807L; // Ein bisschen höher als das absolute Minimum
+        final long PG_BIGINT_MAX = 9223372036854775806L;  // Ein bisschen niedriger als das absolute Maximum
         
         try (Statement stmt = oracleConnection.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
             
             while (rs.next()) {
                 String sequenzName = rs.getString("SEQUENCE_NAME");
-                long minValue = rs.getLong("MIN_VALUE");
-                long maxValue = rs.getLong("MAX_VALUE");
+                
+                // Oracle kann größere Zahlen als Java long verwenden, daher Strings für Sicherheit
+                String minValueStr = rs.getString("MIN_VALUE");
+                String maxValueStr = rs.getString("MAX_VALUE");
+                String lastNumberStr = rs.getString("LAST_NUMBER");
                 long incrementBy = rs.getLong("INCREMENT_BY");
                 int cache = rs.getInt("CACHE_SIZE");
                 String cycle = rs.getString("CYCLE_FLAG");
-                long lastNumber = rs.getLong("LAST_NUMBER");
+                
+                Logger.info("Verarbeite Sequenz " + sequenzName + ": MIN=" + minValueStr + ", MAX=" + maxValueStr + ", LAST=" + lastNumberStr);
+                
+                // Sicheres Parsen mit Überlaufprüfung
+                long minValue, maxValue, lastNumber;
+                
+                // MIN_VALUE verarbeiten - typischerweise 1
+                try {
+                    minValue = Long.parseLong(minValueStr);
+                } catch (NumberFormatException e) {
+                    Logger.info("Sequenz " + sequenzName + ": MIN_VALUE " + minValueStr + " ist zu groß für Java long, verwende 1");
+                    minValue = 1; // Bei Oracle-Sequenzen typischerweise 1
+                }
+                
+                // MAX_VALUE verarbeiten - kann sehr groß sein (z.B. 9.999999999999999999999999999)
+                if (maxValueStr.matches("9\\.?9+E?\\+?\\d*") || maxValueStr.contains("999999")) {
+                    // Erkenne typische Oracle-MAX-Werte wie 9.999... oder 9.99E+25
+                    Logger.info("Sequenz " + sequenzName + ": Extremer MAX_VALUE " + maxValueStr + " erkannt, verwende PostgreSQL Maximum");
+                    maxValue = PG_BIGINT_MAX;
+                } else {
+                    try {
+                        maxValue = Long.parseLong(maxValueStr);
+                    } catch (NumberFormatException e) {
+                        Logger.info("Sequenz " + sequenzName + ": MAX_VALUE " + maxValueStr + " ist zu groß für Java long, verwende PostgreSQL Maximum");
+                        maxValue = PG_BIGINT_MAX;
+                    }
+                }
+                
+                // LAST_NUMBER verarbeiten
+                try {
+                    lastNumber = Long.parseLong(lastNumberStr);
+                } catch (NumberFormatException e) {
+                    Logger.info("Sequenz " + sequenzName + ": LAST_NUMBER " + lastNumberStr + " ist zu groß für Java long, verwende sicheren Startwert");
+                    lastNumber = 1L; // Sicherer Standardwert
+                }
                 
                 // Überlauf-Prüfung und Anpassung
                 long adjustedMinValue = Math.max(minValue, PG_BIGINT_MIN);
@@ -601,11 +638,27 @@ public class OracleToPgMigrator {
                     Logger.info("Sequenz " + sequenzName + ": MAX_VALUE angepasst von " + maxValue + " auf " + adjustedMaxValue);
                 }
                 
+                // Zusätzliche Sicherheitsüberprüfungen für START WITH Wert
+                if (adjustedStartValue <= 0) {
+                    // Bei negativen oder Null-Werten einen sicheren Standardwert verwenden
+                    Logger.info("Sequenz " + sequenzName + ": START WITH Wert " + adjustedStartValue + " ist ungültig, setze auf 1");
+                    adjustedStartValue = 1L;
+                }
+                
                 // Prüfung auf potenzielle Überläufe
-                if (incrementBy > 0 && adjustedStartValue > (adjustedMaxValue - incrementBy)) {
-                    sqlBuilder.append("-- KRITISCH: Sequenz ").append(sequenzName)
-                             .append(" könnte nach wenigen Inkrementen überlaufen!\n");
-                    Logger.info("WARNUNG: Sequenz " + sequenzName + " könnte schnell überlaufen!");
+                if (incrementBy > 0) {
+                    // Wenn der Startwert bereits nahe am Maximum ist, setze ihn auf einen sicheren Wert
+                    if (adjustedStartValue > (adjustedMaxValue - incrementBy * 1000)) {
+                        sqlBuilder.append("-- KRITISCH: Sequenz ").append(sequenzName)
+                                 .append(" könnte bald überlaufen! Starte mit niedrigerem Wert.\n");
+                        Logger.info("WARNUNG: Sequenz " + sequenzName + " könnte schnell überlaufen! Aktuell: " + adjustedStartValue + 
+                                    ", Max: " + adjustedMaxValue);
+                        
+                        // Sicherheitshalber mit niedrigerem Wert starten (1/4 des Maximums)
+                        long saferValue = adjustedMaxValue / 4;
+                        Logger.info("Sequenz " + sequenzName + ": Setze START WITH auf sicheren Wert " + saferValue);
+                        adjustedStartValue = saferValue > 0 ? saferValue : 1;
+                    }
                 }
                 
                 sqlBuilder.append("CREATE SEQUENCE ").append(sequenzName);
@@ -624,9 +677,9 @@ public class OracleToPgMigrator {
                 sqlBuilder.append(";\n");
                 
                 // Originalwerte als Kommentar hinzufügen
-                sqlBuilder.append("-- Original Oracle Werte: MIN=").append(minValue)
-                         .append(", MAX=").append(maxValue)
-                         .append(", LAST=").append(lastNumber).append("\n\n");
+                sqlBuilder.append("-- Original Oracle Werte: MIN=").append(minValueStr)
+                         .append(", MAX=").append(maxValueStr)
+                         .append(", LAST=").append(lastNumberStr).append("\n\n");
             }
         }
         
