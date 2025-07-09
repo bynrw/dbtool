@@ -22,6 +22,7 @@ public class Konfiguration {
     // Listen für Tabellennamen
     private List<String> whitelist; // Tabellen, die migriert werden sollen
     private List<String> blacklist; // Tabellen, die nicht migriert werden sollen
+    private List<String> blacklistPraefixe; // Präfixe für Tabellen, die nicht migriert werden sollen
     
     // Map für Spalten, die pro Tabelle nicht migriert werden sollen
     private Map<String, List<String>> ignorierteSpalten;
@@ -35,12 +36,26 @@ public class Konfiguration {
     // Ausgabepfad für SQL-Dateien
     private String ausgabePfad;
     
-    // Liste der Präfixe für Boolean-Spalten
-    private List<String> booleanPraefixe;
-    // Liste der Suffixe für Boolean-Spalten
-    private List<String> booleanSuffixe;
-    // Liste exakter Spaltennamen, die als Boolean behandelt werden sollen
-    private List<String> booleanNamen;
+    // Migration von zusätzlichen Datenbankobjekten
+    private boolean sequenzenMigrieren;
+    private boolean indizesMigrieren;
+    private boolean constraintsMigrieren;
+    private boolean viewsMigrieren;
+    
+    // Ordner für zusätzliche Datenbankobjekte
+    private boolean ordnerErstellen;
+    private String ordnerSequenzen;
+    private String ordnerIndizes;
+    private String ordnerConstraints;
+    private String ordnerViews;
+    
+    // Alle Tabellen migrieren
+    private boolean alleTabellenMigrieren;
+    
+    // Spalten-Eigenschaften übertragen
+    private boolean spaltenNullConstraintsUebertragen;
+    private boolean spaltenDefaultWerteUebertragen;
+    private boolean spaltenKommentareUebertragen;
     
     /**
      * Konstruktor, der die Konfiguration aus einer Datei einliest.
@@ -63,13 +78,50 @@ public class Konfiguration {
         // Ausgabepfad einlesen
         ausgabePfad = props.getProperty("ausgabe.pfad", "./output/");
         
+        // Migration von zusätzlichen Datenbankobjekten
+        sequenzenMigrieren = Boolean.parseBoolean(props.getProperty("sequenzen.migrieren", "false"));
+        indizesMigrieren = Boolean.parseBoolean(props.getProperty("indizes.migrieren", "false"));
+        constraintsMigrieren = Boolean.parseBoolean(props.getProperty("constraints.migrieren", "false"));
+        viewsMigrieren = Boolean.parseBoolean(props.getProperty("views.migrieren", "false"));
+        
+        // Ordner für zusätzliche Datenbankobjekte
+        ordnerErstellen = Boolean.parseBoolean(props.getProperty("ordner.erstellen", "false"));
+        ordnerSequenzen = props.getProperty("ordner.sequenzen", "sequences");
+        ordnerIndizes = props.getProperty("ordner.indizes", "indices");
+        ordnerConstraints = props.getProperty("ordner.constraints", "constraints");
+        ordnerViews = props.getProperty("ordner.views", "views");
+        
+        // Alle Tabellen migrieren
+        alleTabellenMigrieren = Boolean.parseBoolean(props.getProperty("alle.tabellen.migrieren", "false"));
+        
+        // Spalten-Eigenschaften übertragen
+        spaltenNullConstraintsUebertragen = Boolean.parseBoolean(props.getProperty("spalten.null_constraints.uebertragen", "false"));
+        spaltenDefaultWerteUebertragen = Boolean.parseBoolean(props.getProperty("spalten.default_werte.uebertragen", "false"));
+        spaltenKommentareUebertragen = Boolean.parseBoolean(props.getProperty("spalten.kommentare.uebertragen", "false"));
+        
         // Whitelist und Blacklist einlesen
         whitelist = leseListeEin(props, "tabellen.whitelist");
         blacklist = leseListeEin(props, "tabellen.blacklist");
+        blacklistPraefixe = leseListeEin(props, "tabellen.blacklist.praefixe");
+        
+        // Alle Tabellen migrieren
+        alleTabellenMigrieren = Boolean.parseBoolean(props.getProperty("alle.tabellen.migrieren", "false"));
         
         // Ignorierte Spalten einlesen
         ignorierteSpalten = new HashMap<>();
-        for (String tabelle : whitelist) {
+        List<String> tabellenFuerIgnoriert = alleTabellenMigrieren ? new ArrayList<>() : whitelist;
+        
+        // Bei "alle Tabellen migrieren" müssen wir die Tabellen für ignorierte Spalten aus den Properties lesen
+        if (alleTabellenMigrieren) {
+            for (String key : props.stringPropertyNames()) {
+                if (key.startsWith("tabelle.") && key.endsWith(".ignorierte_spalten")) {
+                    String tabelle = key.substring(8, key.length() - 19); // "tabelle." und ".ignorierte_spalten" entfernen
+                    tabellenFuerIgnoriert.add(tabelle);
+                }
+            }
+        }
+        
+        for (String tabelle : tabellenFuerIgnoriert) {
             List<String> spalten = leseListeEin(props, "tabelle." + tabelle + ".ignorierte_spalten");
             if (!spalten.isEmpty()) {
                 ignorierteSpalten.put(tabelle, spalten);
@@ -125,17 +177,15 @@ public class Konfiguration {
             }
         }
         
-        // Boolean-Präfixe einlesen
-        booleanPraefixe = leseListeEin(props, "spalte.praefixe.boolean");
-        // Boolean-Suffixe einlesen
-        booleanSuffixe = leseListeEin(props, "spalte.suffixe.boolean");
-        // Exakte Boolean-Spaltennamen einlesen
-        booleanNamen = leseListeEin(props, "spalte.namen.boolean");
+        // Boolean-Präfixe einlesen (nicht mehr verwendet)
+        // booleanPraefixe = leseListeEin(props, "spalte.praefixe.boolean");
+        // booleanSuffixe = leseListeEin(props, "spalte.suffixe.boolean");
+        // booleanNamen = leseListeEin(props, "spalte.namen.boolean");
         
-        // Standard-Präfixe hinzufügen, falls nicht in Konfiguration definiert
-        if (booleanPraefixe.isEmpty()) {
-            booleanPraefixe.add("ist");
-        }
+        // Standard-Präfixe hinzufügen, falls nicht in Konfiguration definiert (nicht mehr verwendet)
+        // if (booleanPraefixe.isEmpty()) {
+        //     booleanPraefixe.add("ist");
+        // }
     }
     
     /**
@@ -165,6 +215,29 @@ public class Konfiguration {
     
     public List<String> getWhitelist() { return whitelist; }
     public List<String> getBlacklist() { return blacklist; }
+    public List<String> getBlacklistPraefixe() { return blacklistPraefixe; }
+    
+    /**
+     * Prüft, ob eine Tabelle migriert werden soll.
+     * 
+     * @param tabellenName Name der Tabelle
+     * @return true, wenn die Tabelle migriert werden soll
+     */
+    public boolean sollTabelleMigriert(String tabellenName) {
+        // Prüfung auf Blacklist
+        if (blacklist.contains(tabellenName)) {
+            return false;
+        }
+        
+        // Prüfung auf Blacklist-Präfixe
+        for (String prefix : blacklistPraefixe) {
+            if (tabellenName.startsWith(prefix)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
     
     public Map<String, List<String>> getIgnorierteSpalten() { return ignorierteSpalten; }
     public List<String> getIgnorierteSpalten(String tabelle) {
@@ -180,38 +253,24 @@ public class Konfiguration {
     
     public String getAusgabePfad() { return ausgabePfad; }
     
-    public List<String> getBooleanPraefixe() { return booleanPraefixe; }
-    public List<String> getBooleanSuffixe() { return booleanSuffixe; }
-    public List<String> getBooleanNamen() { return booleanNamen; }
+    // Getter für zusätzliche Datenbankobjekte
+    public boolean isSequenzenMigrieren() { return sequenzenMigrieren; }
+    public boolean isIndizesMigrieren() { return indizesMigrieren; }
+    public boolean isConstraintsMigrieren() { return constraintsMigrieren; }
+    public boolean isViewsMigrieren() { return viewsMigrieren; }
     
-    /**
-     * Prüft, ob eine Spalte basierend auf dem Namen als Boolean behandelt werden soll.
-     * 
-     * @param spaltenName Name der Spalte
-     * @return true, wenn die Spalte als Boolean behandelt werden soll
-     */
-    public boolean istBooleanSpalte(String spaltenName) {
-        // Prüfen auf exakte Übereinstimmung
-        for (String name : booleanNamen) {
-            if (spaltenName.equalsIgnoreCase(name)) {
-                return true;
-            }
-        }
-        
-        // Prüfen auf Präfix
-        for (String prefix : booleanPraefixe) {
-            if (spaltenName.toLowerCase().startsWith(prefix.toLowerCase())) {
-                return true;
-            }
-        }
-        
-        // Prüfen auf Suffix
-        for (String suffix : booleanSuffixe) {
-            if (spaltenName.toLowerCase().endsWith(suffix.toLowerCase())) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
+    // Getter für Ordner-Konfiguration
+    public boolean isOrdnerErstellen() { return ordnerErstellen; }
+    public String getOrdnerSequenzen() { return ordnerSequenzen; }
+    public String getOrdnerIndizes() { return ordnerIndizes; }
+    public String getOrdnerConstraints() { return ordnerConstraints; }
+    public String getOrdnerViews() { return ordnerViews; }
+    
+    // Getter für Tabellen-Migration
+    public boolean isAlleTabellenMigrieren() { return alleTabellenMigrieren; }
+    
+    // Getter für Spalten-Eigenschaften
+    public boolean isSpaltenNullConstraintsUebertragen() { return spaltenNullConstraintsUebertragen; }
+    public boolean isSpaltenDefaultWerteUebertragen() { return spaltenDefaultWerteUebertragen; }
+    public boolean isSpaltenKommentareUebertragen() { return spaltenKommentareUebertragen; }
 }

@@ -38,6 +38,48 @@ public class OracleToPgMigrator {
             ausgabeDir.mkdirs();
             Logger.info("Ausgabeordner erstellt: " + ausgabePfad);
         }
+        
+        // Unterordner für Datenbankobjekte erstellen, falls konfiguriert
+        if (konfiguration.isOrdnerErstellen()) {
+            erstelleUnterordner();
+        }
+    }
+    
+    /**
+     * Erstellt die Unterordner für verschiedene Datenbankobjekte.
+     */
+    private void erstelleUnterordner() {
+        if (konfiguration.isSequenzenMigrieren()) {
+            File sequenzenDir = new File(ausgabePfad, konfiguration.getOrdnerSequenzen());
+            if (!sequenzenDir.exists()) {
+                sequenzenDir.mkdirs();
+                Logger.info("Sequenzen-Ordner erstellt: " + sequenzenDir.getPath());
+            }
+        }
+        
+        if (konfiguration.isIndizesMigrieren()) {
+            File indizesDir = new File(ausgabePfad, konfiguration.getOrdnerIndizes());
+            if (!indizesDir.exists()) {
+                indizesDir.mkdirs();
+                Logger.info("Indizes-Ordner erstellt: " + indizesDir.getPath());
+            }
+        }
+        
+        if (konfiguration.isConstraintsMigrieren()) {
+            File constraintsDir = new File(ausgabePfad, konfiguration.getOrdnerConstraints());
+            if (!constraintsDir.exists()) {
+                constraintsDir.mkdirs();
+                Logger.info("Constraints-Ordner erstellt: " + constraintsDir.getPath());
+            }
+        }
+        
+        if (konfiguration.isViewsMigrieren()) {
+            File viewsDir = new File(ausgabePfad, konfiguration.getOrdnerViews());
+            if (!viewsDir.exists()) {
+                viewsDir.mkdirs();
+                Logger.info("Views-Ordner erstellt: " + viewsDir.getPath());
+            }
+        }
     }
     
     /**
@@ -47,17 +89,63 @@ public class OracleToPgMigrator {
      * @throws IOException Bei Ein-/Ausgabefehlern
      */
     public void migriere() throws SQLException, IOException {
-        List<String> tabellen = konfiguration.getWhitelist();
-        List<String> blacklist = konfiguration.getBlacklist();
+        List<String> tabellen;
+        
+        if (konfiguration.isAlleTabellenMigrieren()) {
+            // Alle Tabellen aus der Datenbank ermitteln
+            tabellen = ermittleAlleTabellenAusDatenbank();
+            Logger.info("Alle Tabellen migrieren: " + tabellen.size() + " Tabellen gefunden");
+        } else {
+            // Nur Tabellen aus der Whitelist
+            tabellen = konfiguration.getWhitelist();
+            Logger.info("Whitelist-Tabellen migrieren: " + tabellen.size() + " Tabellen konfiguriert");
+        }
         
         for (String tabelle : tabellen) {
-            if (!blacklist.contains(tabelle)) {
+            if (konfiguration.sollTabelleMigriert(tabelle)) {
                 Logger.info("Beginne Migration der Tabelle: " + tabelle);
                 migrierenTabelle(tabelle);
             } else {
-                Logger.info("Überspringe Tabelle (in Blacklist): " + tabelle);
+                Logger.info("Überspringe Tabelle (in Blacklist oder Präfix-Blacklist): " + tabelle);
             }
         }
+        
+        // Zusätzliche Datenbankobjekte migrieren
+        if (konfiguration.isSequenzenMigrieren()) {
+            migrierenSequenzen();
+        }
+        
+        if (konfiguration.isIndizesMigrieren()) {
+            migrierenIndizes();
+        }
+        
+        if (konfiguration.isConstraintsMigrieren()) {
+            migrierenConstraints();
+        }
+        
+        if (konfiguration.isViewsMigrieren()) {
+            migrierenViews();
+        }
+    }
+    
+    /**
+     * Ermittelt alle Tabellen aus der Oracle-Datenbank.
+     * 
+     * @return Liste aller Tabellennamen
+     * @throws SQLException Bei Datenbankfehlern
+     */
+    private List<String> ermittleAlleTabellenAusDatenbank() throws SQLException {
+        List<String> tabellen = new ArrayList<>();
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT TABLE_NAME FROM USER_TABLES ORDER BY TABLE_NAME")) {
+            
+            while (rs.next()) {
+                tabellen.add(rs.getString("TABLE_NAME"));
+            }
+        }
+        
+        return tabellen;
     }
     
     /**
@@ -103,6 +191,7 @@ public class OracleToPgMigrator {
             // Zusätzliche Informationen über die Spalten holen
             DatabaseMetaData dbMetaData = oracleConnection.getMetaData();
             Map<String, String> spaltenInfo = new HashMap<>();
+            Map<String, String> spaltenDefaults = new HashMap<>();
             
             try (ResultSet columnsRs = dbMetaData.getColumns(null, null, tabellenname.toUpperCase(), null)) {
                 while (columnsRs.next()) {
@@ -111,6 +200,7 @@ public class OracleToPgMigrator {
                     int spaltenSize = columnsRs.getInt("COLUMN_SIZE");
                     int dezimalStellen = columnsRs.getInt("DECIMAL_DIGITS");
                     String nullbar = columnsRs.getString("IS_NULLABLE");
+                    String defaultValue = columnsRs.getString("COLUMN_DEF");
                     
                     String oracleDatentyp = typName;
                     if (typName.equals("NUMBER") && spaltenSize > 0) {
@@ -124,6 +214,11 @@ public class OracleToPgMigrator {
                     }
                     
                     spaltenInfo.put(spaltenName, oracleDatentyp + ":" + nullbar);
+                    
+                    // Default-Werte speichern
+                    if (konfiguration.isSpaltenDefaultWerteUebertragen() && defaultValue != null && !defaultValue.trim().isEmpty()) {
+                        spaltenDefaults.put(spaltenName, defaultValue.trim());
+                    }
                 }
             }
             
@@ -170,8 +265,19 @@ public class OracleToPgMigrator {
                 StringBuilder spaltenDef = new StringBuilder();
                 spaltenDef.append("    ").append(spaltenName).append(" ").append(postgresDatentyp);
                 
-                if (nullbarkeit.equals("NO")) {
-                    spaltenDef.append(" NOT NULL");
+                // NULL/NOT NULL Constraints hinzufügen
+                if (konfiguration.isSpaltenNullConstraintsUebertragen()) {
+                    if (nullbarkeit.equals("NO")) {
+                        spaltenDef.append(" NOT NULL");
+                    }
+                }
+                
+                // Default-Werte hinzufügen
+                if (konfiguration.isSpaltenDefaultWerteUebertragen() && spaltenDefaults.containsKey(spaltenName)) {
+                    String defaultValue = spaltenDefaults.get(spaltenName);
+                    // Oracle-Default-Werte in PostgreSQL-Format konvertieren
+                    defaultValue = konvertiereOracleDefaultZuPostgres(defaultValue);
+                    spaltenDef.append(" DEFAULT ").append(defaultValue);
                 }
                 
                 spaltenDefinitionen.add(spaltenDef.toString());
@@ -211,6 +317,9 @@ public class OracleToPgMigrator {
         createSql.append(String.join(",\n", spaltenDefinitionen));
         createSql.append("\n);\n");
         
+        // Spalten-Kommentare hinzufügen
+        createSql.append(migriereSpaltenKommentare(tabellenname));
+        
         return createSql.toString();
     }
     
@@ -222,12 +331,6 @@ public class OracleToPgMigrator {
      */
     private String mappeOracleZuPostgresDatentyp(String oracleDatentyp, String spaltenName) {
         Map<String, String> mapping = konfiguration.getDatentypMapping();
-        
-        // Prüfen, ob die Spalte basierend auf ihrem Namen als Boolean behandelt werden soll
-        if (konfiguration.istBooleanSpalte(spaltenName)) {
-            Logger.info("Spalte mit Boolean-Präfix erkannt: " + spaltenName + " -> BOOLEAN");
-            return "BOOLEAN";
-        }
         
         // Exakte Übereinstimmung prüfen
         if (mapping.containsKey(oracleDatentyp)) {
@@ -417,5 +520,386 @@ public class OracleToPgMigrator {
             writer.print(sql);
         }
         Logger.info("SQL-Datei gespeichert: " + pfad);
+    }
+    
+    /**
+     * Migriert alle Sequenzen aus der Oracle-Datenbank und verhindert Überläufe.
+     * 
+     * @throws SQLException Bei Datenbankfehlern
+     * @throws IOException Bei Ein-/Ausgabefehlern
+     */
+    private void migrierenSequenzen() throws SQLException, IOException {
+        Logger.info("Beginne Migration der Sequenzen");
+        
+        String sql = "SELECT SEQUENCE_NAME, MIN_VALUE, MAX_VALUE, INCREMENT_BY, CACHE_SIZE, CYCLE_FLAG, LAST_NUMBER " +
+                    "FROM USER_SEQUENCES ORDER BY SEQUENCE_NAME";
+        
+        StringBuilder sqlBuilder = new StringBuilder();
+        sqlBuilder.append("-- Sequenzen Migration\n");
+        sqlBuilder.append("-- Erstellt von Oracle-zu-PostgreSQL Migration\n");
+        sqlBuilder.append("-- Überlauf-Schutz für PostgreSQL implementiert\n\n");
+        
+        // PostgreSQL BIGINT Grenzen
+        final long PG_BIGINT_MIN = -9223372036854775808L;
+        final long PG_BIGINT_MAX = 9223372036854775807L;
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String sequenzName = rs.getString("SEQUENCE_NAME");
+                long minValue = rs.getLong("MIN_VALUE");
+                long maxValue = rs.getLong("MAX_VALUE");
+                long incrementBy = rs.getLong("INCREMENT_BY");
+                int cache = rs.getInt("CACHE_SIZE");
+                String cycle = rs.getString("CYCLE_FLAG");
+                long lastNumber = rs.getLong("LAST_NUMBER");
+                
+                // Überlauf-Prüfung und Anpassung
+                long adjustedMinValue = Math.max(minValue, PG_BIGINT_MIN);
+                long adjustedMaxValue = Math.min(maxValue, PG_BIGINT_MAX);
+                long adjustedStartValue = Math.max(lastNumber, adjustedMinValue);
+                
+                // Warnung bei Anpassungen
+                if (minValue != adjustedMinValue) {
+                    sqlBuilder.append("-- WARNUNG: MIN_VALUE angepasst von ").append(minValue)
+                             .append(" auf ").append(adjustedMinValue).append(" (PostgreSQL Limit)\n");
+                    Logger.info("Sequenz " + sequenzName + ": MIN_VALUE angepasst von " + minValue + " auf " + adjustedMinValue);
+                }
+                
+                if (maxValue != adjustedMaxValue) {
+                    sqlBuilder.append("-- WARNUNG: MAX_VALUE angepasst von ").append(maxValue)
+                             .append(" auf ").append(adjustedMaxValue).append(" (PostgreSQL Limit)\n");
+                    Logger.info("Sequenz " + sequenzName + ": MAX_VALUE angepasst von " + maxValue + " auf " + adjustedMaxValue);
+                }
+                
+                // Prüfung auf potenzielle Überläufe
+                if (incrementBy > 0 && adjustedStartValue > (adjustedMaxValue - incrementBy)) {
+                    sqlBuilder.append("-- KRITISCH: Sequenz ").append(sequenzName)
+                             .append(" könnte nach wenigen Inkrementen überlaufen!\n");
+                    Logger.info("WARNUNG: Sequenz " + sequenzName + " könnte schnell überlaufen!");
+                }
+                
+                sqlBuilder.append("CREATE SEQUENCE ").append(sequenzName);
+                sqlBuilder.append("\n    START WITH ").append(adjustedStartValue);
+                sqlBuilder.append("\n    INCREMENT BY ").append(incrementBy);
+                sqlBuilder.append("\n    MINVALUE ").append(adjustedMinValue);
+                sqlBuilder.append("\n    MAXVALUE ").append(adjustedMaxValue);
+                sqlBuilder.append("\n    CACHE ").append(cache);
+                
+                if ("Y".equals(cycle)) {
+                    sqlBuilder.append("\n    CYCLE");
+                } else {
+                    sqlBuilder.append("\n    NO CYCLE");
+                }
+                
+                sqlBuilder.append(";\n");
+                
+                // Originalwerte als Kommentar hinzufügen
+                sqlBuilder.append("-- Original Oracle Werte: MIN=").append(minValue)
+                         .append(", MAX=").append(maxValue)
+                         .append(", LAST=").append(lastNumber).append("\n\n");
+            }
+        }
+        
+        if (konfiguration.isOrdnerErstellen()) {
+            speichereSQL(konfiguration.getOrdnerSequenzen() + File.separator + "sequences.sql", sqlBuilder.toString());
+        } else {
+            speichereSQL("sequences.sql", sqlBuilder.toString());
+        }
+        
+        Logger.info("Sequenzen-Migration abgeschlossen");
+    }
+    
+    /**
+     * Migriert alle Indizes aus der Oracle-Datenbank.
+     * 
+     * @throws SQLException Bei Datenbankfehlern
+     * @throws IOException Bei Ein-/Ausgabefehlern
+     */
+    private void migrierenIndizes() throws SQLException, IOException {
+        Logger.info("Beginne Migration der Indizes");
+        
+        String sql = "SELECT i.INDEX_NAME, i.TABLE_NAME, i.UNIQUENESS, " +
+                    "LISTAGG(ic.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS COLUMNS " +
+                    "FROM USER_INDEXES i " +
+                    "JOIN USER_IND_COLUMNS ic ON i.INDEX_NAME = ic.INDEX_NAME " +
+                    "WHERE i.INDEX_TYPE = 'NORMAL' AND i.GENERATED = 'N' " +
+                    "GROUP BY i.INDEX_NAME, i.TABLE_NAME, i.UNIQUENESS " +
+                    "ORDER BY i.TABLE_NAME, i.INDEX_NAME";
+        
+        StringBuilder sqlBuilder = new StringBuilder();
+        sqlBuilder.append("-- Indizes Migration\n");
+        sqlBuilder.append("-- Erstellt von Oracle-zu-PostgreSQL Migration\n\n");
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String indexName = rs.getString("INDEX_NAME");
+                String tableName = rs.getString("TABLE_NAME");
+                String uniqueness = rs.getString("UNIQUENESS");
+                String columns = rs.getString("COLUMNS");
+                
+                sqlBuilder.append("CREATE ");
+                
+                if ("UNIQUE".equals(uniqueness)) {
+                    sqlBuilder.append("UNIQUE ");
+                }
+                
+                sqlBuilder.append("INDEX ").append(indexName);
+                sqlBuilder.append(" ON ").append(tableName);
+                sqlBuilder.append(" (").append(columns).append(");\n\n");
+            }
+        }
+        
+        if (konfiguration.isOrdnerErstellen()) {
+            speichereSQL(konfiguration.getOrdnerIndizes() + File.separator + "indexes.sql", sqlBuilder.toString());
+        } else {
+            speichereSQL("indexes.sql", sqlBuilder.toString());
+        }
+        
+        Logger.info("Indizes-Migration abgeschlossen");
+    }
+    
+    /**
+     * Migriert alle Constraints aus der Oracle-Datenbank.
+     * 
+     * @throws SQLException Bei Datenbankfehlern
+     * @throws IOException Bei Ein-/Ausgabefehlern
+     */
+    private void migrierenConstraints() throws SQLException, IOException {
+        Logger.info("Beginne Migration der Constraints");
+        
+        StringBuilder sqlBuilder = new StringBuilder();
+        sqlBuilder.append("-- Constraints Migration\n");
+        sqlBuilder.append("-- Erstellt von Oracle-zu-PostgreSQL Migration\n\n");
+        
+        // Primary Key Constraints
+        sqlBuilder.append("-- Primary Key Constraints\n");
+        migrierePrimaryKeyConstraints(sqlBuilder);
+        
+        // Foreign Key Constraints
+        sqlBuilder.append("\n-- Foreign Key Constraints\n");
+        migriereForeignKeyConstraints(sqlBuilder);
+        
+        // Check Constraints
+        sqlBuilder.append("\n-- Check Constraints\n");
+        migriereCheckConstraints(sqlBuilder);
+        
+        if (konfiguration.isOrdnerErstellen()) {
+            speichereSQL(konfiguration.getOrdnerConstraints() + File.separator + "constraints.sql", sqlBuilder.toString());
+        } else {
+            speichereSQL("constraints.sql", sqlBuilder.toString());
+        }
+        
+        Logger.info("Constraints-Migration abgeschlossen");
+    }
+    
+    /**
+     * Migriert Primary Key Constraints.
+     */
+    private void migrierePrimaryKeyConstraints(StringBuilder sqlBuilder) throws SQLException {
+        String sql = "SELECT c.CONSTRAINT_NAME, c.TABLE_NAME, " +
+                    "LISTAGG(cc.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY cc.POSITION) AS COLUMNS " +
+                    "FROM USER_CONSTRAINTS c " +
+                    "JOIN USER_CONS_COLUMNS cc ON c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME " +
+                    "WHERE c.CONSTRAINT_TYPE = 'P' " +
+                    "GROUP BY c.CONSTRAINT_NAME, c.TABLE_NAME " +
+                    "ORDER BY c.TABLE_NAME";
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String constraintName = rs.getString("CONSTRAINT_NAME");
+                String tableName = rs.getString("TABLE_NAME");
+                String columns = rs.getString("COLUMNS");
+                
+                sqlBuilder.append("ALTER TABLE ").append(tableName);
+                sqlBuilder.append(" ADD CONSTRAINT ").append(constraintName);
+                sqlBuilder.append(" PRIMARY KEY (").append(columns).append(");\n");
+            }
+        }
+    }
+    
+    /**
+     * Migriert Foreign Key Constraints.
+     */
+    private void migriereForeignKeyConstraints(StringBuilder sqlBuilder) throws SQLException {
+        String sql = "SELECT c.CONSTRAINT_NAME, c.TABLE_NAME, c.R_CONSTRAINT_NAME, " +
+                    "LISTAGG(cc.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY cc.POSITION) AS COLUMNS, " +
+                    "rc.TABLE_NAME as R_TABLE_NAME, " +
+                    "LISTAGG(rcc.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY rcc.POSITION) AS R_COLUMNS " +
+                    "FROM USER_CONSTRAINTS c " +
+                    "JOIN USER_CONS_COLUMNS cc ON c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME " +
+                    "JOIN USER_CONSTRAINTS rc ON c.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME " +
+                    "JOIN USER_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME " +
+                    "WHERE c.CONSTRAINT_TYPE = 'R' " +
+                    "GROUP BY c.CONSTRAINT_NAME, c.TABLE_NAME, c.R_CONSTRAINT_NAME, rc.TABLE_NAME " +
+                    "ORDER BY c.TABLE_NAME";
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String constraintName = rs.getString("CONSTRAINT_NAME");
+                String tableName = rs.getString("TABLE_NAME");
+                String columns = rs.getString("COLUMNS");
+                String rTableName = rs.getString("R_TABLE_NAME");
+                String rColumns = rs.getString("R_COLUMNS");
+                
+                sqlBuilder.append("ALTER TABLE ").append(tableName);
+                sqlBuilder.append(" ADD CONSTRAINT ").append(constraintName);
+                sqlBuilder.append(" FOREIGN KEY (").append(columns).append(")");
+                sqlBuilder.append(" REFERENCES ").append(rTableName);
+                sqlBuilder.append(" (").append(rColumns).append(");\n");
+            }
+        }
+    }
+    
+    /**
+     * Migriert Check Constraints.
+     */
+    private void migriereCheckConstraints(StringBuilder sqlBuilder) throws SQLException {
+        String sql = "SELECT CONSTRAINT_NAME, TABLE_NAME, SEARCH_CONDITION " +
+                    "FROM USER_CONSTRAINTS " +
+                    "WHERE CONSTRAINT_TYPE = 'C' AND GENERATED = 'USER NAME' " +
+                    "ORDER BY TABLE_NAME";
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String constraintName = rs.getString("CONSTRAINT_NAME");
+                String tableName = rs.getString("TABLE_NAME");
+                String searchCondition = rs.getString("SEARCH_CONDITION");
+                
+                sqlBuilder.append("ALTER TABLE ").append(tableName);
+                sqlBuilder.append(" ADD CONSTRAINT ").append(constraintName);
+                sqlBuilder.append(" CHECK (").append(searchCondition).append(");\n");
+            }
+        }
+    }
+    
+    /**
+     * Migriert alle Views aus der Oracle-Datenbank.
+     * 
+     * @throws SQLException Bei Datenbankfehlern
+     * @throws IOException Bei Ein-/Ausgabefehlern
+     */
+    private void migrierenViews() throws SQLException, IOException {
+        Logger.info("Beginne Migration der Views");
+        
+        String sql = "SELECT VIEW_NAME, TEXT FROM USER_VIEWS ORDER BY VIEW_NAME";
+        
+        StringBuilder sqlBuilder = new StringBuilder();
+        sqlBuilder.append("-- Views Migration\n");
+        sqlBuilder.append("-- Erstellt von Oracle-zu-PostgreSQL Migration\n\n");
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String viewName = rs.getString("VIEW_NAME");
+                String viewText = rs.getString("TEXT");
+                
+                sqlBuilder.append("CREATE OR REPLACE VIEW ").append(viewName).append(" AS\n");
+                sqlBuilder.append(viewText);
+                sqlBuilder.append(";\n\n");
+            }
+        }
+        
+        if (konfiguration.isOrdnerErstellen()) {
+            speichereSQL(konfiguration.getOrdnerViews() + File.separator + "views.sql", sqlBuilder.toString());
+        } else {
+            speichereSQL("views.sql", sqlBuilder.toString());
+        }
+        
+        Logger.info("Views-Migration abgeschlossen");
+    }
+    
+    /**
+     * Konvertiert Oracle-Default-Werte in PostgreSQL-Format.
+     * 
+     * @param oracleDefault Der Oracle-Default-Wert
+     * @return Der PostgreSQL-Default-Wert
+     */
+    private String konvertiereOracleDefaultZuPostgres(String oracleDefault) {
+        if (oracleDefault == null || oracleDefault.trim().isEmpty()) {
+            return "";
+        }
+        
+        String defaultValue = oracleDefault.trim();
+        
+        // SYSDATE -> CURRENT_TIMESTAMP
+        if (defaultValue.toUpperCase().equals("SYSDATE")) {
+            return "CURRENT_TIMESTAMP";
+        }
+        
+        // USER -> CURRENT_USER
+        if (defaultValue.toUpperCase().equals("USER")) {
+            return "CURRENT_USER";
+        }
+        
+        // SYS_GUID() -> gen_random_uuid()
+        if (defaultValue.toUpperCase().equals("SYS_GUID()")) {
+            return "gen_random_uuid()";
+        }
+        
+        // Sequenz-Aufrufe: SEQUENCE_NAME.NEXTVAL -> nextval('SEQUENCE_NAME')
+        if (defaultValue.toUpperCase().contains(".NEXTVAL")) {
+            String sequenceName = defaultValue.substring(0, defaultValue.toUpperCase().indexOf(".NEXTVAL"));
+            return "nextval('" + sequenceName + "')";
+        }
+        
+        // Strings sind bereits in Anführungszeichen
+        // Numerische Werte bleiben gleich
+        return defaultValue;
+    }
+    
+    /**
+     * Migriert Spalten-Kommentare.
+     * 
+     * @param tabellenname Der Name der Tabelle
+     * @return SQL-Statements für Spalten-Kommentare
+     * @throws SQLException Bei Datenbankfehlern
+     */
+    private String migriereSpaltenKommentare(String tabellenname) throws SQLException {
+        if (!konfiguration.isSpaltenKommentareUebertragen()) {
+            return "";
+        }
+        
+        StringBuilder kommentarSql = new StringBuilder();
+        kommentarSql.append("\n-- Spalten-Kommentare für Tabelle ").append(tabellenname).append("\n");
+        
+        String sql = "SELECT COLUMN_NAME, COMMENTS " +
+                    "FROM USER_COL_COMMENTS " +
+                    "WHERE TABLE_NAME = '" + tabellenname.toUpperCase() + "' " +
+                    "AND COMMENTS IS NOT NULL " +
+                    "ORDER BY COLUMN_NAME";
+        
+        try (Statement stmt = oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                String spaltenName = rs.getString("COLUMN_NAME");
+                String kommentar = rs.getString("COMMENTS");
+                
+                // Ignorierte Spalten überspringen
+                List<String> ignorierteSpalten = konfiguration.getIgnorierteSpalten(tabellenname);
+                if (ignorierteSpalten.contains(spaltenName)) {
+                    continue;
+                }
+                
+                if (kommentar != null && !kommentar.trim().isEmpty()) {
+                    kommentarSql.append("COMMENT ON COLUMN ").append(tabellenname).append(".")
+                               .append(spaltenName).append(" IS '")
+                               .append(kommentar.replace("'", "''")).append("';\n");
+                }
+            }
+        }
+        
+        return kommentarSql.toString();
     }
 }
