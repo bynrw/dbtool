@@ -204,7 +204,12 @@ public class OracleToPgMigrator {
                     
                     String oracleDatentyp = typName;
                     if (typName.equals("NUMBER") && spaltenSize > 0) {
-                        if (dezimalStellen > 0) {
+                        // Spezielle Formatierung für NUMBER(1,0) zur besseren Erkennung
+                        if (spaltenSize == 1 && dezimalStellen == 0) {
+                            oracleDatentyp = "NUMBER(1,0)";
+                        } 
+                        // Normale Formatierung für andere NUMBER-Typen
+                        else if (dezimalStellen >= 0) {
                             oracleDatentyp = "NUMBER(" + spaltenSize + "," + dezimalStellen + ")";
                         } else {
                             oracleDatentyp = "NUMBER(" + spaltenSize + ")";
@@ -248,7 +253,12 @@ public class OracleToPgMigrator {
                     int scale = metaData.getScale(i);
                     
                     if (oracleDatentyp.equals("NUMBER") && precision > 0) {
-                        if (scale > 0) {
+                        // Spezielle Formatierung für NUMBER(1,0) zur besseren Erkennung
+                        if (precision == 1 && scale == 0) {
+                            oracleDatentyp = "NUMBER(1,0)";
+                        }
+                        // Normale Formatierung für andere NUMBER-Typen
+                        else if (scale >= 0) {
                             oracleDatentyp = "NUMBER(" + precision + "," + scale + ")";
                         } else {
                             oracleDatentyp = "NUMBER(" + precision + ")";
@@ -332,6 +342,11 @@ public class OracleToPgMigrator {
     private String mappeOracleZuPostgresDatentyp(String oracleDatentyp, String spaltenName) {
         Map<String, String> mapping = konfiguration.getDatentypMapping();
         
+        // Spezielle Behandlung für NUMBER(1,0) exakt -> BOOLEAN
+        if (oracleDatentyp.equals("NUMBER(1,0)")) {
+            return "BOOLEAN";
+        }
+        
         // Spezielle Behandlung für NUMBER-Typen
         if (oracleDatentyp.startsWith("NUMBER(")) {
             // Extrahiere Precision und Scale aus NUMBER(p,s)
@@ -343,7 +358,7 @@ public class OracleToPgMigrator {
                     int precision = Integer.parseInt(teile[0].trim());
                     int scale = Integer.parseInt(teile[1].trim());
                     
-                    // NUMBER(1,0) -> BOOLEAN (spezifisch)
+                    // NUMBER(1,0) -> BOOLEAN (spezifisch) - Fallback, falls exakte Übereinstimmung nicht greift
                     if (precision == 1 && scale == 0) {
                         return "BOOLEAN";
                     }
