@@ -1,19 +1,6 @@
 # Oracle zu PostgreSQL Migrationstool
 
-Dieses Java-Tool migriert komplette Oracle-Datenbanken zu PostgreSQL, indem es SQL-Skripte für alle Datenbankobjekte erzeugt.
-
-## Funktionen
-
-Das Tool migriert folgende Datenbankobjekte:
-- **Tabellen** (Struktur und Daten)
-- **Indizes** (einschließlich Unique-Indizes)
-- **Sequenzen** (mit korrekten Start- und Increment-Werten)
-- **Views** (mit automatischer SQL-Konvertierung)
-- **Triggers** (Dokumentation für manuelle Anpassung)
-- **Funktionen** (Dokumentation für manuelle Anpassung)
-- **Prozeduren** (Dokumentation für manuelle Anpassung)
-- **Synonyme** (als Views implementiert)
-- **Constraints** (Primary Keys, Foreign Keys)
+Dieses Java-Tool migriert Tabellen von einer Oracle-Datenbank zu PostgreSQL, indem es SQL-Skripte für CREATE TABLE und INSERT-Statements erzeugt.
 
 ## Anforderungen
 
@@ -42,26 +29,9 @@ javac -cp "lib/*" -d bin src/*.java
 java -cp "bin;lib/*" Main pfad/zur/konfigurationsdatei.properties
 ```
 
-## Schnellstart
-
-1. **Einfachste Verwendung** (alle Tabellen migrieren):
-   ```properties
-   # In config.properties:
-   tabellen.alle=true
-   tabellen.blacklist=TEMP_%,BACKUP_%,SYS_%
-   ```
-
-2. **Selektive Migration** (nur bestimmte Tabellen):
-   ```properties
-   # In config.properties:
-   tabellen.alle=false
-   tabellen.whitelist=KUNDEN,BESTELLUNGEN,PRODUKTE
-   ```
-
-3. **Tool ausführen**:
-   ```bash
-   java -cp "bin;lib/*" Main config.properties
-   ```
+3. Beim Start werden Sie nach folgenden Informationen gefragt:
+   - Datenbank-Name (z.B. "lvn_database")
+   - Umgebung (z.B. "development", "testing", "production")
 
 ## Konfiguration
 
@@ -79,23 +49,51 @@ postgres.benutzer=postgres
 postgres.passwort=postgres
 ```
 
+### Ausgabe-Konfiguration
+
+```
+# Ausgabepfad für SQL-Dateien
+ausgabe.pfad=./output
+
+# Datenbank-Name und Umgebung (können beim Start überschrieben werden)
+datenbank.name=lvn_database
+umgebung=development
+
+# Ordner für zusätzliche Datenbankobjekte erstellen
+ordner.erstellen=true
+ordner.tables_create=tables_create
+ordner.tables_inserts=tables_inserts
+ordner.sequenzen=sequences
+ordner.indizes=indices
+ordner.constraints=constraints
+ordner.views=views
+```
+
+### Zusätzliche Datenbankobjekte
+
+```
+# Zusätzliche Datenbankobjekte migrieren
+sequenzen.migrieren=true
+indizes.migrieren=true
+constraints.migrieren=true
+views.migrieren=true
+```
+
 ### Tabellen-Konfiguration
 
 ```
-# Automatische Erkennung aller Tabellen (empfohlen)
-tabellen.alle=true
+# Tabellen für Migration (durch Kommas getrennt)
+tabellen.whitelist=KUNDEN,BESTELLUNGEN,PRODUKTE
 
-# Alternative: Manuelle Whitelist (nur wenn tabellen.alle=false)
-# tabellen.whitelist=KUNDEN,BESTELLUNGEN,PRODUKTE
+# Alle Tabellen migrieren (wenn true, wird whitelist ignoriert)
+alle.tabellen.migrieren=false
 
 # Tabellen, die von der Migration ausgeschlossen werden sollen
-tabellen.blacklist=TEMP_TABELLE,BACKUP_TABELLE,SYS_%
+tabellen.blacklist=TEMP_TABELLE,BACKUP_TABELLE
 
 # Spalten, die pro Tabelle ignoriert werden sollen
 tabelle.KUNDEN.ignorierte_spalten=LETZTE_AKTUALISIERUNG,INTERNE_ID
 ```
-
-**Empfehlung**: Verwenden Sie `tabellen.alle=true` und definieren Sie nur die Tabellen in der `blacklist`, die Sie **nicht** migrieren möchten. Das Tool erkennt automatisch alle Tabellen in Ihrer Oracle-Datenbank.
 
 ### Datentyp-Mappings und Transformationen
 
@@ -107,56 +105,33 @@ datentyp.mapping=NUMBER(1)->BOOLEAN;VARCHAR2->VARCHAR;CLOB->TEXT
 transform.NUMBER_1_=0->false;1->true
 ```
 
-### Erweiterte Migrations-Optionen
-
-```
-# Konfiguration welche Objekte migriert werden sollen
-migration.indizes=true
-migration.sequenzen=true
-migration.views=true
-migration.triggers=false
-migration.funktionen=false
-migration.prozeduren=false
-migration.synonyme=false
-migration.constraints=true
-
-# Namens-Mappings für PostgreSQL
-schema.mapping=
-index.prefix=idx_
-sequence.suffix=_seq
-constraint.prefix=
-```
-
 ## Ausgabe
 
-Das Tool erzeugt separate SQL-Dateien für jeden Objekttyp:
+Das Tool erzeugt für jede Tabelle SQL-Dateien in einer strukturierten Verzeichnishierarchie:
 
-- `<tabelle>_create.sql` - Tabellendefinitionen
-- `<tabelle>_inserts.sql` - Datenimport-Statements
-- `indizes.sql` - Alle Indizes
-- `sequenzen.sql` - Alle Sequenzen
-- `views.sql` - Alle Views
-- `triggers.sql` - Trigger-Dokumentation (manuell anzupassen)
-- `funktionen.sql` - Funktions-Dokumentation (manuell anzupassen)
-- `prozeduren.sql` - Prozedur-Dokumentation (manuell anzupassen)
-- `synonyme.sql` - Synonyme als Views implementiert
+```
+ausgabe.pfad/
+  ├── 20250714_123456_lvn_database_production/  # Zeitstempel_Datenbankname_Umgebung
+  │   ├── tables_create/
+  │   │   ├── 20250714_123456_lvn_database_production_KUNDEN_create.sql
+  │   │   ├── 20250714_123456_lvn_database_production_BESTELLUNGEN_create.sql
+  │   │   └── ...
+  │   ├── tables_inserts/
+  │   │   ├── 20250714_123456_lvn_database_production_KUNDEN_inserts.sql
+  │   │   ├── 20250714_123456_lvn_database_production_BESTELLUNGEN_inserts.sql
+  │   │   └── ...
+  │   ├── sequences/
+  │   │   └── 20250714_123456_lvn_database_production_sequences_sql.sql
+  │   ├── indices/
+  │   │   └── 20250714_123456_lvn_database_production_indexes_sql.sql
+  │   ├── constraints/
+  │   │   └── 20250714_123456_lvn_database_production_constraints_sql.sql
+  │   └── views/
+  │       └── 20250714_123456_lvn_database_production_views_sql.sql
+```
 
-## Hinweise zur Migration
+Jede SQL-Datei enthält einen Zeitstempel-Kommentar mit Informationen zur Generierungszeit, Datenbank und Umgebung.
 
-### Automatisch konvertiert:
-- Tabellen und Daten
-- Indizes und Constraints
-- Sequenzen mit korrekten Werten
-- Views (grundlegende SQL-Konvertierung)
+## Logdateien
 
-### Manuelle Anpassung erforderlich:
-- **Triggers**: Oracle PL/SQL → PostgreSQL PL/pgSQL
-- **Funktionen**: Oracle PL/SQL → PostgreSQL PL/pgSQL  
-- **Prozeduren**: Oracle PL/SQL → PostgreSQL PL/pgSQL
-- **Komplexe Views**: Spezielle Oracle-Funktionen
-
-### SQL-Konvertierungen (automatisch):
-- `NVL()` → `COALESCE()`
-- `SYSDATE` → `CURRENT_TIMESTAMP`
-- `ROWNUM` → `ROW_NUMBER() OVER()`
-- Oracle-Datentypen → PostgreSQL-Datentypen
+Logdateien werden im `logs`-Verzeichnis abgelegt und enthalten detaillierte Informationen über den Migrationsprozess.

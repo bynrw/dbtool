@@ -1,0 +1,23 @@
+[2025-07-14 10:42:15] [INFO] Logger initialisiert
+[2025-07-14 10:42:21] [INFO] Migration gestartet mit Konfiguration: config_lvn_entwicklung.properties
+[2025-07-14 10:42:21] [INFO] Konfiguration aus Datei 'config_lvn_entwicklung.properties' geladen
+[2025-07-14 10:42:21] [INFO] Konfiguration erfolgreich geladen
+[2025-07-14 10:42:21] [INFO] Migration für Datenbank: lvn, Umgebung: entwicklung, Zeitstempel: 20250714_104221
+[2025-07-14 10:42:21] [FEHLER] Oracle JDBC-Treiber konnte nicht geladen werden: oracle.jdbc.OracleDriver
+java.lang.ClassNotFoundException: oracle.jdbc.OracleDriver
+	at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:641)
+	at java.base/jdk.internal.loader.ClassLoaders$AppClassLoader.loadClass(ClassLoaders.java:188)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:526)
+	at java.base/java.lang.Class.forName0(Native Method)
+	at java.base/java.lang.Class.forName(Class.java:421)
+	at java.base/java.lang.Class.forName(Class.java:412)
+	at de.dbmigration.db.DatabaseManager.verbindeZuOracle(DatabaseManager.java:32)
+	at de.dbmigration.Main.main(Main.java:134)
+[2025-07-14 10:42:21] [FEHLER] Datenbankfehler während der Migration: Oracle JDBC-Treiber nicht gefunden
+java.sql.SQLException: Oracle JDBC-Treiber nicht gefunden
+	at de.dbmigration.db.DatabaseManager.verbindeZuOracle(DatabaseManager.java:36)
+	at de.dbmigration.Main.main(Main.java:134)
+Caused by: java.lang.ClassNotFoundException: oracle.jdbc.OracleDriver
+	at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:641)
+	at java.base/jdk.internal.loader.ClassLoaders$AppClassLoader.loadClass(ClassLoaders.java:188)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:526)
