@@ -488,157 +488,86 @@ public class OracleToPgMigrator implements Migrator {
      * @return Die INSERT SQL Statements
      * @throws SQLException Bei Datenbankfehlern
      */
-private String erzeugeInserts(String tabellenName) throws SQLException {
-    List<String> ignorierteSpalten = this.konfiguration.getIgnorierteSpalten(tabellenName);
-    String spaltenListe = "*";
-    
-    // Sammle Spalten-Metadaten einmalig
-    Map<String, String> spaltenDetailTypen = new HashMap<>();
-    
-    // Falls Spalten ignoriert werden sollen, explizite Spaltenliste erstellen
-    if (!ignorierteSpalten.isEmpty()) {
-        List<String> alleSpalten = new ArrayList<>();
-        List<String> zuMigrierendeSpalten = new ArrayList<>();
+    private String erzeugeInserts(String tabellenName) throws SQLException {
+        List<String> ignorierteSpalten = this.konfiguration.getIgnorierteSpalten(tabellenName);
+        String spaltenListe = "*";
+        
+        // Falls Spalten ignoriert werden sollen, explizite Spaltenliste erstellen
+        if (!ignorierteSpalten.isEmpty()) {
+            List<String> alleSpalten = new ArrayList<>();
+            List<String> zuMigrierendeSpalten = new ArrayList<>();
+            
+            try (Statement stmt = this.oracleConnection.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT * FROM " + tabellenName + " WHERE 1=0")) {
+                
+                ResultSetMetaData rsmd = rs.getMetaData();
+                int columnCount = rsmd.getColumnCount();
+                
+                for (int i = 1; i <= columnCount; i++) {
+                    String spaltenName = rsmd.getColumnName(i);
+                    alleSpalten.add(spaltenName);
+                    
+                    if (!ignorierteSpalten.contains(spaltenName)) {
+                        zuMigrierendeSpalten.add(spaltenName);
+                    }
+                }
+            }
+            
+            spaltenListe = String.join(", ", zuMigrierendeSpalten);
+        }
+        
+        StringBuilder inserts = new StringBuilder();
         
         try (Statement stmt = this.oracleConnection.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT * FROM " + tabellenName + " WHERE 1=0")) {
+             ResultSet rs = stmt.executeQuery("SELECT " + spaltenListe + " FROM " + tabellenName)) {
             
             ResultSetMetaData rsmd = rs.getMetaData();
             int columnCount = rsmd.getColumnCount();
             
+            // Spaltenliste für INSERTs vorbereiten
+            List<String> spaltenNamen = new ArrayList<>();
+            Map<Integer, String> spaltenTypen = new HashMap<>();
+            
             for (int i = 1; i <= columnCount; i++) {
                 String spaltenName = rsmd.getColumnName(i);
-                alleSpalten.add(spaltenName);
+                spaltenNamen.add(spaltenName);
+                spaltenTypen.put(i, rsmd.getColumnTypeName(i));
+            }
+            
+            String spaltenString = "(" + String.join(", ", spaltenNamen) + ")";
+            int zeilenZaehler = 0;
+            
+            // Daten durchgehen und INSERT-Statements generieren
+            while (rs.next()) {
+                List<String> werte = new ArrayList<>();
                 
-                if (!ignorierteSpalten.contains(spaltenName)) {
-                    zuMigrierendeSpalten.add(spaltenName);
+                for (int i = 1; i <= columnCount; i++) {
+                    String typName = spaltenTypen.get(i);
+                    Object wert = rs.getObject(i);
+                    
+                    if (!rs.wasNull() && wert != null) {
+                        String formatierterWert = this.formatierteWert(wert, typName);
+                        werte.add(formatierterWert);
+                    } else {
+                        werte.add("NULL");
+                    }
                 }
-            }
-        }
-        
-        spaltenListe = String.join(", ", zuMigrierendeSpalten);
-    }
-    
-    // Ermittle detaillierte Spalten-Typen einmalig
-    DatabaseMetaData dbmd = this.oracleConnection.getMetaData();
-    try (ResultSet columns = dbmd.getColumns(null, null, tabellenName.toUpperCase(), null)) {
-        while (columns.next()) {
-            String spaltenName = columns.getString("COLUMN_NAME");
-            String typeName = columns.getString("TYPE_NAME");
-            int size = columns.getInt("COLUMN_SIZE");
-            int digits = columns.getInt("DECIMAL_DIGITS");
-            
-            String detailTyp = typeName;
-            if (typeName.equals("NUMBER") && size > 0) {
-                if (size == 1 && digits == 0) {
-                    detailTyp = "NUMBER(1,0)";
-                } else if (digits >= 0) {
-                    detailTyp = "NUMBER(" + size + "," + digits + ")";
-                } else {
-                    detailTyp = "NUMBER(" + size + ")";
-                }
-            } else if (typeName.equals("VARCHAR2") || typeName.equals("CHAR")) {
-                detailTyp = typeName + "(" + size + ")";
-            }
-            
-            spaltenDetailTypen.put(spaltenName, detailTyp);
-        }
-    }
-    
-    StringBuilder inserts = new StringBuilder();
-    
-    try (Statement stmt = this.oracleConnection.createStatement();
-         ResultSet rs = stmt.executeQuery("SELECT " + spaltenListe + " FROM " + tabellenName)) {
-        
-        ResultSetMetaData rsmd = rs.getMetaData();
-        int columnCount = rsmd.getColumnCount();
-        
-        // Spaltenliste für INSERTs vorbereiten
-        List<String> spaltenNamen = new ArrayList<>();
-        Map<Integer, String> spaltenTypen = new HashMap<>();
-        Map<Integer, String> spaltenDetailTypen2 = new HashMap<>();
-        
-        for (int i = 1; i <= columnCount; i++) {
-            String spaltenName = rsmd.getColumnName(i);
-            spaltenNamen.add(spaltenName);
-            spaltenTypen.put(i, rsmd.getColumnTypeName(i));
-            spaltenDetailTypen2.put(i, spaltenDetailTypen.get(spaltenName));
-        }
-        
-        String spaltenString = "(" + String.join(", ", spaltenNamen) + ")";
-        int zeilenZaehler = 0;
-        
-        // Daten durchgehen und INSERT-Statements generieren
-        while (rs.next()) {
-            List<String> werte = new ArrayList<>();
-            
-            for (int i = 1; i <= columnCount; i++) {
-                String typName = spaltenTypen.get(i);
-                String detailTyp = spaltenDetailTypen2.get(i);
-                Object wert = rs.getObject(i);
                 
-                if (!rs.wasNull() && wert != null) {
-                    String formatierterWert = this.formatierteWertMitDetailTyp(wert, typName, detailTyp);
-                    werte.add(formatierterWert);
-                } else {
-                    werte.add("NULL");
+                String werteString = "(" + String.join(", ", werte) + ")";
+                inserts.append("INSERT INTO ").append(tabellenName).append(" ")
+                       .append(spaltenString).append(" VALUES ").append(werteString).append(";\n");
+                
+                zeilenZaehler++;
+                if (zeilenZaehler % 1000 == 0) {
+                    Logger.info("Verarbeite Zeile " + zeilenZaehler + " für Tabelle " + tabellenName);
                 }
             }
             
-            String werteString = "(" + String.join(", ", werte) + ")";
-            inserts.append("INSERT INTO ").append(tabellenName).append(" ")
-                   .append(spaltenString).append(" VALUES ").append(werteString).append(";\n");
-            
-            zeilenZaehler++;
-            if (zeilenZaehler % 1000 == 0) {
-                Logger.info("Verarbeite Zeile " + zeilenZaehler + " für Tabelle " + tabellenName);
-            }
+            Logger.info("Insgesamt " + zeilenZaehler + " Zeilen für Tabelle " + tabellenName + " verarbeitet");
         }
         
-        Logger.info("Insgesamt " + zeilenZaehler + " Zeilen für Tabelle " + tabellenName + " verarbeitet");
+        return inserts.toString();
     }
-    
-    return inserts.toString();
-}
-
-private String formatierteWertMitDetailTyp(Object wert, String typName, String detailTyp) {
-    // Spezialbehandlung für NUMBER(1,0) - diese werden als BOOLEAN behandelt
-    if (detailTyp != null && detailTyp.equals("NUMBER(1,0)")) {
-        if (wert instanceof Number) {
-            String wertStr = wert.toString();
-            if ("0".equals(wertStr)) {
-                return "false";
-            } else if ("1".equals(wertStr)) {
-                return "true";
-            }
-        }
-    }
-    
-    // Allgemeine Spezialbehandlung für boolsche Werte basierend auf Konfiguration
-    // Nur anwenden wenn es NICHT NUMBER(1,0) ist
-    if (wert instanceof Number && typName.equals("NUMBER") && 
-        (wert.toString().equals("0") || wert.toString().equals("1")) &&
-        (detailTyp == null || !detailTyp.equals("NUMBER(1,0)"))) {
-        
-        Map<String, String> transformation = this.konfiguration.getWertetransformation("NUMBER(1)");
-        if (transformation != null && transformation.containsKey(wert.toString())) {
-            return transformation.get(wert.toString());
-        }
-    }
-    
-    // String-Werte escapen
-    if (wert instanceof String || wert instanceof Character) {
-        return "'" + this.escapeStringWert(wert.toString()) + "'";
-    }
-    
-    // Datum und Timestamp mit Anführungszeichen
-    if (wert instanceof Date || wert instanceof Timestamp) {
-        return "'" + wert.toString() + "'";
-    }
-    
-    // Andere Werte direkt übernehmen
-    return wert.toString();
-}
 
     /**
      * Formatiert einen Wert für die Verwendung in INSERT-Statements.
@@ -647,63 +576,45 @@ private String formatierteWertMitDetailTyp(Object wert, String typName, String d
      * @param typName Der Oracle-Datentyp des Werts
      * @return Der formatierte Wert als String
      */
-   private String formatierteWert(Object wert, String typName, String spaltenName) {
-    // Ermittle den detaillierten Datentyp aus den Metadaten
-    String detailTyp = this.ermittleDetailTypFuerSpalte(spaltenName, typName);
-    
-    // Spezialbehandlung für NUMBER(1,0) - diese werden als BOOLEAN behandelt
-    if (detailTyp != null && detailTyp.equals("NUMBER(1,0)")) {
-        if (wert instanceof Number) {
-            String wertStr = wert.toString();
-            if ("0".equals(wertStr)) {
-                return "false";
-            } else if ("1".equals(wertStr)) {
-                return "true";
-            }
-        }
-    }
-    
-    // Allgemeine Spezialbehandlung für boolsche Werte basierend auf Konfiguration
-    if (wert instanceof Number && typName.equals("NUMBER") && 
-        (wert.toString().equals("0") || wert.toString().equals("1"))) {
-        
-        // Nur anwenden wenn es NICHT NUMBER(1,0) ist (das wird oben behandelt)
-        if (detailTyp == null || !detailTyp.equals("NUMBER(1,0)")) {
+    private String formatierteWert(Object wert, String typName) {
+        // Spezialbehandlung für NUMBER(1) → BOOLEAN oder 0/1
+        if (wert instanceof Number && typName.equals("NUMBER") &&
+            (wert.toString().equals("0") || wert.toString().equals("1"))) {
+            
+            // Transformation holen (z.B. 0 → false, 1 → true)
             Map<String, String> transformation = this.konfiguration.getWertetransformation("NUMBER(1)");
-            if (transformation != null && transformation.containsKey(wert.toString())) {
-                return transformation.get(wert.toString());
-            }
-        }
-    }
-    
-    // String-Werte escapen
-    if (wert instanceof String || wert instanceof Character) {
-        return "'" + this.escapeStringWert(wert.toString()) + "'";
-    }
-    
-    // Datum und Timestamp mit Anführungszeichen
-    if (wert instanceof Date || wert instanceof Timestamp) {
-        return "'" + wert.toString() + "'";
-    }
-    
-    // Andere Werte direkt übernehmen
-    return wert.toString();
-}
 
-private String ermittleDetailTypFuerSpalte(String spaltenName, String basisTyp) {
-    try {
-        DatabaseMetaData dbmd = this.oracleConnection.getMetaData();
-        
-        // Aktueller Tabellenname muss irgendwie verfügbar sein
-        // Da diese Methode nur aus erzeugeInserts aufgerufen wird, 
-        // fügen wir den Tabellennamen als Parameter hinzu
-        return null; // Placeholder - siehe überarbeitete Version unten
-        
-    } catch (SQLException e) {
-        Logger.info("Fehler beim Ermitteln des Detailtyps für Spalte " + spaltenName + ": " + e.getMessage());
-        return null;
+            // Wenn die Transformation vorhanden ist UND explizit BOOLEAN sein soll
+            if (transformation != null) {
+                String transformed = transformation.get(wert.toString());
+
+                // Wenn die Transformation true/false ergibt, prüfe ob du das wirklich willst
+                if ("true".equalsIgnoreCase(transformed) || "false".equalsIgnoreCase(transformed)) {
+                    // 🔴 HIER ENTSCHEIDEST DU: BOOLEAN oder NICHT?
+                    // Lösung: Nur übernehmen, wenn du wirklich eine BOOLEAN-Spalte hast
+                    // → wenn du keine Info über den Zieltyp hast: NICHT verwenden!
+                    return wert.toString(); // → gibt "0" oder "1" zurück
+                }
+            }
+
+            // Falls keine Transformation oder keine BOOLEAN-Zielspalte: Zahl zurückgeben
+            return wert.toString();
+        }
+
+        // Strings escapen
+        if (wert instanceof String || wert instanceof Character) {
+            return "'" + this.escapeStringWert(wert.toString()) + "'";
+        }
+
+        // Datum/Timestamp
+        if (wert instanceof Date || wert instanceof Timestamp) {
+            return "'" + wert.toString() + "'";
+        }
+
+        // Alles andere direkt
+        return wert.toString();
     }
-}
+
 
     /**
      * Escaped einen String-Wert für SQL.
