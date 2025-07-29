@@ -431,67 +431,101 @@ public class OracleToPgMigrator implements Migrator {
      * @param spaltenName Der Name der Spalte (für Logging)
      * @return Der entsprechende PostgreSQL-Datentyp
      */
-    private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenName) {
-        Map<String, String> mapping = this.konfiguration.getDatentypMapping();
+   /**
+ * Konvertiert einen Oracle-Datentyp in einen PostgreSQL-Datentyp.
+ * 
+ * @param oracleTyp Der Oracle-Datentyp
+ * @param spaltenName Der Name der Spalte (für Logging)
+ * @return Der entsprechende PostgreSQL-Datentyp
+ */
+private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenName) {
+    Map<String, String> mapping = this.konfiguration.getDatentypMapping();
+    
+    // Spezialbehandlung für Oracle DATE -> PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+    if (oracleTyp.equals("DATE")) {
+        Logger.info("Oracle DATE-Spalte '" + spaltenName + "' wird zu TIMESTAMP WITHOUT TIME ZONE konvertiert");
+        return "TIMESTAMP WITHOUT TIME ZONE";
+    }
+    
+    // Spezialbehandlung für boolsche Werte
+    if (oracleTyp.equals("NUMBER(1,0)")) {
+        return "BOOLEAN";
+    }
+    
+    // Spezialbehandlung für NUMBER-Typen
+    if (oracleTyp.startsWith("NUMBER(")) {
+        String precision = oracleTyp.substring(7, oracleTyp.length() - 1);
+        String[] teile = precision.split(",");
         
-        // Spezialbehandlung für boolsche Werte
-        if (oracleTyp.equals("NUMBER(1,0)")) {
-            return "BOOLEAN";
-        }
-        
-        // Spezialbehandlung für NUMBER-Typen
-        if (oracleTyp.startsWith("NUMBER(")) {
-            String precision = oracleTyp.substring(7, oracleTyp.length() - 1);
-            String[] teile = precision.split(",");
-            
-            if (teile.length >= 2) {
-                try {
-                    int size = Integer.parseInt(teile[0].trim());
-                    int scale = Integer.parseInt(teile[1].trim());
-                    
-                    if (size == 1 && scale == 0) {
-                        return "BOOLEAN";
-                    }
-                    
-                    if (scale == 0) {
-                        return "BIGINT";
-                    }
-                    
-                    return "NUMERIC";
-                } catch (NumberFormatException e) {
-                    Logger.info("Fehler beim Parsen von NUMBER-Typ: " + oracleTyp);
+        if (teile.length >= 2) {
+            try {
+                int size = Integer.parseInt(teile[0].trim());
+                int scale = Integer.parseInt(teile[1].trim());
+                
+                if (size == 1 && scale == 0) {
+                    return "BOOLEAN";
                 }
-            }
-            
-            if (teile.length == 1) {
-                return "BIGINT";
+                
+                if (scale == 0) {
+                    return "BIGINT";
+                }
+                
+                return "NUMERIC";
+            } catch (NumberFormatException e) {
+                Logger.info("Fehler beim Parsen von NUMBER-Typ: " + oracleTyp);
             }
         }
         
-        // Standard NUMBER ohne Größenangabe
-        if (oracleTyp.equals("NUMBER")) {
+        if (teile.length == 1) {
             return "BIGINT";
         }
-        
-        // Explizites Mapping aus der Konfiguration verwenden
-        if (mapping.containsKey(oracleTyp)) {
-            return mapping.get(oracleTyp);
-        }
-        
-        // VARCHAR2 zu VARCHAR konvertieren
-        if (oracleTyp.startsWith("VARCHAR2")) {
-            return "VARCHAR";
-        }
-        
-        // CHAR-Typen unverändert übernehmen
-        if (oracleTyp.startsWith("CHAR")) {
-            return oracleTyp;
-        }
-        
-        // Fallback für unbekannte Typen
-        Logger.info("Unbekannter Datentyp: " + oracleTyp + ", verwende TEXT als Standard");
+    }
+    
+    // Standard NUMBER ohne Größenangabe
+    if (oracleTyp.equals("NUMBER")) {
+        return "BIGINT";
+    }
+    
+    // Explizites Mapping aus der Konfiguration verwenden
+    if (mapping.containsKey(oracleTyp)) {
+        return mapping.get(oracleTyp);
+    }
+    
+    // VARCHAR2 zu VARCHAR konvertieren
+    if (oracleTyp.startsWith("VARCHAR2")) {
+        return "VARCHAR";
+    }
+    
+    // CHAR-Typen unverändert übernehmen
+    if (oracleTyp.startsWith("CHAR")) {
+        return oracleTyp;
+    }
+    
+    // Zusätzliche Oracle-Datentypen für bessere Kompatibilität
+    if (oracleTyp.equals("TIMESTAMP")) {
+        return "TIMESTAMP WITHOUT TIME ZONE";
+    }
+    
+    if (oracleTyp.startsWith("TIMESTAMP(")) {
+        return "TIMESTAMP WITHOUT TIME ZONE";
+    }
+    
+    if (oracleTyp.equals("CLOB")) {
         return "TEXT";
     }
+    
+    if (oracleTyp.equals("BLOB")) {
+        return "BYTEA";
+    }
+    
+    if (oracleTyp.equals("RAW")) {
+        return "BYTEA";
+    }
+    
+    // Fallback für unbekannte Typen
+    Logger.info("Unbekannter Datentyp: " + oracleTyp + " für Spalte '" + spaltenName + "', verwende TEXT als Standard");
+    return "TEXT";
+}
 
     /**
      * Erzeugt INSERT-Statements für eine Tabelle.
