@@ -30,6 +30,9 @@ public class OracleToPgMigrator implements Migrator {
     private final Connection oracleConnection;
     private final String ausgabePfad;
     private final String basisVerzeichnis;
+    
+    // Neue Map für die Verfolgung der PostgreSQL-Spaltentypen während der Tabellenmigration
+    private Map<String, String> aktuelleTabelleSpaltenTypen; // Spaltenname -> PostgreSQL-Typ
 
     /**
      * Konstruktor für den OracleToPgMigrator.
@@ -213,7 +216,10 @@ public class OracleToPgMigrator implements Migrator {
      * @throws IOException Bei Dateisystemfehlern
      */
     private void migrierenTabelle(String tabellenName) throws SQLException, IOException {
-        // CREATE TABLE Statement generieren
+        // Map für die Spaltentypen initialisieren
+        this.aktuelleTabelleSpaltenTypen = new HashMap<>();
+        
+        // CREATE TABLE Statement generieren (füllt die Map)
         String createTableSql = this.erzeugeCreateTable(tabellenName);
         
         // Strukturierter Dateiname für CREATE TABLE
@@ -227,7 +233,7 @@ public class OracleToPgMigrator implements Migrator {
         }
         Logger.info("CREATE TABLE-SQL für " + tabellenName + " erzeugt: " + createTableDateiname);
         
-        // INSERT Statements generieren
+        // INSERT Statements generieren (verwendet die Map)
         String insertSql = this.erzeugeInserts(tabellenName);
         
         // Strukturierter Dateiname für INSERTs
@@ -240,6 +246,9 @@ public class OracleToPgMigrator implements Migrator {
             this.speichereSQL(insertDateiname, insertSql, true);
         }
         Logger.info("INSERT-Statements für " + tabellenName + " erzeugt: " + insertDateiname);
+        
+        // Map zurücksetzen
+        this.aktuelleTabelleSpaltenTypen = null;
     }
     
     /**
@@ -359,6 +368,9 @@ public class OracleToPgMigrator implements Migrator {
                 
                 // Typ zu PostgreSQL konvertieren
                 String pgTyp = this.mappeOracleZuPostgresDatentyp(typDef, spaltenName);
+                
+                // Spaltentyp in Map speichern für spätere Verwendung bei INSERTs
+                this.aktuelleTabelleSpaltenTypen.put(spaltenName, pgTyp);
                 
                 // Spaltendefinition erstellen
                 StringBuilder spaltenDef = new StringBuilder();
@@ -526,12 +538,12 @@ public class OracleToPgMigrator implements Migrator {
             
             // Spaltenliste für INSERTs vorbereiten
             List<String> spaltenNamen = new ArrayList<>();
-            Map<Integer, String> spaltenTypen = new HashMap<>();
+            Map<Integer, String> oracleTypen = new HashMap<>();
             
             for (int i = 1; i <= columnCount; i++) {
                 String spaltenName = rsmd.getColumnName(i);
                 spaltenNamen.add(spaltenName);
-                spaltenTypen.put(i, rsmd.getColumnTypeName(i));
+                oracleTypen.put(i, rsmd.getColumnTypeName(i));
             }
             
             String spaltenString = "(" + String.join(", ", spaltenNamen) + ")";
@@ -542,11 +554,13 @@ public class OracleToPgMigrator implements Migrator {
                 List<String> werte = new ArrayList<>();
                 
                 for (int i = 1; i <= columnCount; i++) {
-                    String typName = spaltenTypen.get(i);
+                    String spaltenName = rsmd.getColumnName(i);
+                    String oracleTyp = oracleTypen.get(i);
                     Object wert = rs.getObject(i);
+                    String postgresTyp = this.aktuelleTabelleSpaltenTypen.get(spaltenName);
                     
                     if (!rs.wasNull() && wert != null) {
-                        String formatierterWert = this.formatierteWert(wert, typName);
+                        String formatierterWert = this.formatierteWert(wert, oracleTyp, postgresTyp);
                         werte.add(formatierterWert);
                     } else {
                         werte.add("NULL");
@@ -571,43 +585,45 @@ public class OracleToPgMigrator implements Migrator {
 
     /**
      * Formatiert einen Wert für die Verwendung in INSERT-Statements.
+     * Verbesserte Version, die PostgreSQL-Spaltentypen berücksichtigt.
      * 
      * @param wert Der zu formatierende Wert
-     * @param typName Der Oracle-Datentyp des Werts
+     * @param oracleTyp Der Oracle-Datentyp des Werts
+     * @param postgresTyp Der PostgreSQL-Datentyp der Spalte
      * @return Der formatierte Wert als String
      */
-    private String formatierteWert(Object wert, String typName) {
-    if (wert instanceof Number && typName.equals("NUMBER") &&
-        ("0".equals(wert.toString()) || "1".equals(wert.toString()))) {
-
-        Map<String, String> transformation = this.konfiguration.getWertetransformation("NUMBER(1)");
-
-        if (transformation != null) {
-            String transformed = transformation.get(wert.toString());
-
-            // Wenn die Transformation korrekt gesetzt ist (z. B. "true" / "false")
-            if (transformed != null &&
-                ("true".equalsIgnoreCase(transformed) || "false".equalsIgnoreCase(transformed))) {
-                return transformed;
+    private String formatierteWert(Object wert, String oracleTyp, String postgresTyp) {
+        // Behandlung für PostgreSQL BOOLEAN
+        if (postgresTyp != null && postgresTyp.equalsIgnoreCase("BOOLEAN")) {
+            if (wert instanceof Number) {
+                int num = ((Number) wert).intValue();
+                return (num == 1) ? "true" : "false";
+            } else if (wert instanceof Boolean) {
+                return (Boolean) wert ? "true" : "false";
+            } else if (wert instanceof String) {
+                String s = (String) wert;
+                if ("1".equals(s) || "true".equalsIgnoreCase(s)) {
+                    return "true";
+                } else if ("0".equals(s) || "false".equalsIgnoreCase(s)) {
+                    return "false";
+                }
             }
+            return wert.toString();
         }
-
-        // Kein Mapping oder ungültiges → einfach Zahl zurückgeben
+        
+        // Strings escapen
+        if (wert instanceof String || wert instanceof Character) {
+            return "'" + this.escapeStringWert(wert.toString()) + "'";
+        }
+        
+        // Datum/Timestamp
+        if (wert instanceof Date || wert instanceof Timestamp) {
+            return "'" + wert.toString() + "'";
+        }
+        
+        // Alles andere direkt
         return wert.toString();
     }
-
-    if (wert instanceof String || wert instanceof Character) {
-        return "'" + this.escapeStringWert(wert.toString()) + "'";
-    }
-
-    if (wert instanceof Date || wert instanceof Timestamp) {
-        return "'" + wert.toString() + "'";
-    }
-
-    return wert.toString();
-}
-
-
 
     /**
      * Escaped einen String-Wert für SQL.
