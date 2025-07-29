@@ -577,43 +577,36 @@ public class OracleToPgMigrator implements Migrator {
      * @return Der formatierte Wert als String
      */
     private String formatierteWert(Object wert, String typName) {
-        // Spezialbehandlung für NUMBER(1) → BOOLEAN oder 0/1
-        if (wert instanceof Number && typName.equals("NUMBER") &&
-            (wert.toString().equals("0") || wert.toString().equals("1"))) {
-            
-            // Transformation holen (z.B. 0 → false, 1 → true)
-            Map<String, String> transformation = this.konfiguration.getWertetransformation("NUMBER(1)");
+    if (wert instanceof Number && typName.equals("NUMBER") &&
+        ("0".equals(wert.toString()) || "1".equals(wert.toString()))) {
 
-            // Wenn die Transformation vorhanden ist UND explizit BOOLEAN sein soll
-            if (transformation != null) {
-                String transformed = transformation.get(wert.toString());
+        Map<String, String> transformation = this.konfiguration.getWertetransformation("NUMBER(1)");
 
-                // Wenn die Transformation true/false ergibt, prüfe ob du das wirklich willst
-                if ("true".equalsIgnoreCase(transformed) || "false".equalsIgnoreCase(transformed)) {
-                    // 🔴 HIER ENTSCHEIDEST DU: BOOLEAN oder NICHT?
-                    // Lösung: Nur übernehmen, wenn du wirklich eine BOOLEAN-Spalte hast
-                    // → wenn du keine Info über den Zieltyp hast: NICHT verwenden!
-                    return wert.toString(); // → gibt "0" oder "1" zurück
-                }
+        if (transformation != null) {
+            String transformed = transformation.get(wert.toString());
+
+            // Wenn die Transformation korrekt gesetzt ist (z. B. "true" / "false")
+            if (transformed != null &&
+                ("true".equalsIgnoreCase(transformed) || "false".equalsIgnoreCase(transformed))) {
+                return transformed;
             }
-
-            // Falls keine Transformation oder keine BOOLEAN-Zielspalte: Zahl zurückgeben
-            return wert.toString();
         }
 
-        // Strings escapen
-        if (wert instanceof String || wert instanceof Character) {
-            return "'" + this.escapeStringWert(wert.toString()) + "'";
-        }
-
-        // Datum/Timestamp
-        if (wert instanceof Date || wert instanceof Timestamp) {
-            return "'" + wert.toString() + "'";
-        }
-
-        // Alles andere direkt
+        // Kein Mapping oder ungültiges → einfach Zahl zurückgeben
         return wert.toString();
     }
+
+    if (wert instanceof String || wert instanceof Character) {
+        return "'" + this.escapeStringWert(wert.toString()) + "'";
+    }
+
+    if (wert instanceof Date || wert instanceof Timestamp) {
+        return "'" + wert.toString() + "'";
+    }
+
+    return wert.toString();
+}
+
 
 
     /**
