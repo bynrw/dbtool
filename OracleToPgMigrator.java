@@ -424,7 +424,7 @@ public class OracleToPgMigrator implements Migrator {
         return sql.toString();
     }
 
-    /**
+ /**
  * Konvertiert einen Oracle-Datentyp in einen PostgreSQL-Datentyp.
  * Korrigierte Version: DATE bleibt DATE, TIMESTAMP bleibt TIMESTAMP
  * 
@@ -614,7 +614,7 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
         return inserts.toString();
     }
 
-   /**
+ /**
  * Formatiert einen Wert für die Verwendung in INSERT-Statements.
  * Korrigierte Version mit verbesserter Datum/Zeit-Behandlung.
  * 
@@ -1054,7 +1054,7 @@ private String formatierteWert(Object wert, String oracleTyp, String postgresTyp
         Logger.info("Views-Migration abgeschlossen");
     }
 
-    /**
+ /**
  * Konvertiert Oracle-spezifische Default-Werte zu PostgreSQL-Syntax.
  * Korrigierte Version mit Unterstützung für String-Konkatenation
  * 
@@ -1102,6 +1102,7 @@ private String konvertiereOracleDefaultZuPostgres(String defaultWert, String spa
         return trimmedWert;
     }
 }
+
 
 /**
  * Konvertiert Oracle String-Konkatenation mit + Operator zu PostgreSQL || Operator
