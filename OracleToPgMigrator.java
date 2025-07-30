@@ -1070,43 +1070,84 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
         }
     }
 
-    /**
-     * Migriert Spaltenkommentare für eine Tabelle.
-     * 
-     * @param tabellenName Der Name der Tabelle
-     * @return SQL-Statements für Spaltenkommentare
-     * @throws SQLException Bei Datenbankfehlern
-     */
-    private String migriereSpaltenKommentare(String tabellenName) throws SQLException {
-        if (!this.konfiguration.isSpaltenKommentareUebertragen()) {
-            return "";
-        }
+   /**
+ * Migriert Spaltenkommentare für eine Tabelle mit Unterstützung für mehrzeilige Kommentare.
+ * 
+ * @param tabellenName Der Name der Tabelle
+ * @return SQL-Statements für Spaltenkommentare
+ * @throws SQLException Bei Datenbankfehlern
+ */
+private String migriereSpaltenKommentare(String tabellenName) throws SQLException {
+    if (!this.konfiguration.isSpaltenKommentareUebertragen()) {
+        return "";
+    }
+    
+    StringBuilder sql = new StringBuilder();
+    sql.append("\n-- Spalten-Kommentare für Tabelle ").append(tabellenName).append("\n");
+    
+    String query = "SELECT COLUMN_NAME, COMMENTS FROM USER_COL_COMMENTS " +
+                  "WHERE TABLE_NAME = '" + tabellenName.toUpperCase() + "' " +
+                  "AND COMMENTS IS NOT NULL ORDER BY COLUMN_NAME";
+    
+    try (Statement stmt = this.oracleConnection.createStatement();
+         ResultSet rs = stmt.executeQuery(query)) {
         
-        StringBuilder sql = new StringBuilder();
-        sql.append("\n-- Spalten-Kommentare für Tabelle ").append(tabellenName).append("\n");
-        
-        String query = "SELECT COLUMN_NAME, COMMENTS FROM USER_COL_COMMENTS " +
-                      "WHERE TABLE_NAME = '" + tabellenName.toUpperCase() + "' " +
-                      "AND COMMENTS IS NOT NULL ORDER BY COLUMN_NAME";
-        
-        try (Statement stmt = this.oracleConnection.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+        while (rs.next()) {
+            String columnName = rs.getString("COLUMN_NAME");
+            String comment = rs.getString("COMMENTS");
             
-            while (rs.next()) {
-                String columnName = rs.getString("COLUMN_NAME");
-                String comment = rs.getString("COMMENTS");
+            List<String> ignorierteSpalten = this.konfiguration.getIgnorierteSpalten(tabellenName);
+            
+            if (!ignorierteSpalten.contains(columnName) && comment != null && !comment.trim().isEmpty()) {
                 
-                List<String> ignorierteSpalten = this.konfiguration.getIgnorierteSpalten(tabellenName);
-                
-                if (!ignorierteSpalten.contains(columnName) && comment != null && !comment.trim().isEmpty()) {
+                // Prüfen ob der Kommentar mehrzeilig ist
+                if (comment.contains("\n") || comment.contains("\r")) {
+                    // Mehrzeilige Kommentare mit $$ Syntax
+                    String bereinigerKommentar = bereinigeMehrzeiligerKommentar(comment);
                     sql.append("COMMENT ON COLUMN ").append(tabellenName).append(".")
-                       .append(columnName).append(" IS '").append(comment.replace("'", "''")).append("';\n");
+                       .append(columnName).append(" IS $$").append(bereinigerKommentar).append("$$;\n");
+                } else {
+                    // Einzeilige Kommentare mit einfachen Anführungszeichen
+                    String bereinigerKommentar = comment.replace("'", "''").trim();
+                    sql.append("COMMENT ON COLUMN ").append(tabellenName).append(".")
+                       .append(columnName).append(" IS '").append(bereinigerKommentar).append("';\n");
                 }
             }
         }
-        
-        return sql.toString();
     }
+    
+    return sql.toString();
+}
+
+/**
+ * Bereinigt mehrzeilige Kommentare für PostgreSQL $$ Syntax.
+ * 
+ * @param kommentar Der ursprüngliche mehrzeilige Kommentar
+ * @return Der bereinigte Kommentar
+ */
+private String bereinigeMehrzeiligerKommentar(String kommentar) {
+    if (kommentar == null) {
+        return "";
+    }
+    
+    // $$ in Kommentaren durch alternative Zeichen ersetzen, da sie die Syntax stören würden
+    String bereinigt = kommentar.replace("$$", "<<>>");
+    
+    // Trim jede Zeile einzeln für bessere Formatierung
+    String[] zeilen = bereinigt.split("\r?\n");
+    StringBuilder result = new StringBuilder();
+    
+    for (int i = 0; i < zeilen.length; i++) {
+        result.append(zeilen[i].trim());
+        if (i < zeilen.length - 1) {
+            result.append("\n");
+        }
+    }
+    
+    Logger.info("Mehrzeiliger Kommentar bereinigt für $$ Syntax");
+    
+    return result.toString();
+}
     
     /**
      * Speichert SQL-Code in einer Datei.
