@@ -425,14 +425,8 @@ public class OracleToPgMigrator implements Migrator {
     }
 
     /**
-     * Konvertiert einen Oracle-Datentyp in einen PostgreSQL-Datentyp.
-     * 
-     * @param oracleTyp Der Oracle-Datentyp
-     * @param spaltenName Der Name der Spalte (für Logging)
-     * @return Der entsprechende PostgreSQL-Datentyp
-     */
-   /**
  * Konvertiert einen Oracle-Datentyp in einen PostgreSQL-Datentyp.
+ * Korrigierte Version: DATE bleibt DATE, TIMESTAMP bleibt TIMESTAMP
  * 
  * @param oracleTyp Der Oracle-Datentyp
  * @param spaltenName Der Name der Spalte (für Logging)
@@ -441,10 +435,21 @@ public class OracleToPgMigrator implements Migrator {
 private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenName) {
     Map<String, String> mapping = this.konfiguration.getDatentypMapping();
     
-    // Spezialbehandlung für Oracle DATE -> PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+    // Oracle DATE -> PostgreSQL DATE (KORRIGIERT)
     if (oracleTyp.equals("DATE")) {
-        Logger.info("Oracle DATE-Spalte '" + spaltenName + "' wird zu TIMESTAMP WITHOUT TIME ZONE konvertiert");
-        return "TIMESTAMP WITHOUT TIME ZONE";
+        Logger.info("Oracle DATE-Spalte '" + spaltenName + "' wird zu DATE konvertiert");
+        return "DATE";
+    }
+    
+    // Oracle TIMESTAMP -> PostgreSQL TIMESTAMP (KORRIGIERT)
+    if (oracleTyp.equals("TIMESTAMP")) {
+        Logger.info("Oracle TIMESTAMP-Spalte '" + spaltenName + "' wird zu TIMESTAMP konvertiert");
+        return "TIMESTAMP";
+    }
+    
+    if (oracleTyp.startsWith("TIMESTAMP(")) {
+        Logger.info("Oracle TIMESTAMP-Spalte '" + spaltenName + "' wird zu TIMESTAMP konvertiert");
+        return "TIMESTAMP";
     }
     
     // Spezialbehandlung für boolsche Werte
@@ -501,15 +506,6 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
         return oracleTyp;
     }
     
-    // Zusätzliche Oracle-Datentypen für bessere Kompatibilität
-    if (oracleTyp.equals("TIMESTAMP")) {
-        return "TIMESTAMP WITHOUT TIME ZONE";
-    }
-    
-    if (oracleTyp.startsWith("TIMESTAMP(")) {
-        return "TIMESTAMP WITHOUT TIME ZONE";
-    }
-    
     if (oracleTyp.equals("CLOB")) {
         return "TEXT";
     }
@@ -526,6 +522,7 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
     Logger.info("Unbekannter Datentyp: " + oracleTyp + " für Spalte '" + spaltenName + "', verwende TEXT als Standard");
     return "TEXT";
 }
+
 
     /**
      * Erzeugt INSERT-Statements für eine Tabelle.
@@ -617,47 +614,69 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
         return inserts.toString();
     }
 
-    /**
-     * Formatiert einen Wert für die Verwendung in INSERT-Statements.
-     * Verbesserte Version, die PostgreSQL-Spaltentypen berücksichtigt.
-     * 
-     * @param wert Der zu formatierende Wert
-     * @param oracleTyp Der Oracle-Datentyp des Werts
-     * @param postgresTyp Der PostgreSQL-Datentyp der Spalte
-     * @return Der formatierte Wert als String
-     */
-    private String formatierteWert(Object wert, String oracleTyp, String postgresTyp) {
-        // Behandlung für PostgreSQL BOOLEAN
-        if (postgresTyp != null && postgresTyp.equalsIgnoreCase("BOOLEAN")) {
-            if (wert instanceof Number) {
-                int num = ((Number) wert).intValue();
-                return (num == 1) ? "true" : "false";
-            } else if (wert instanceof Boolean) {
-                return (Boolean) wert ? "true" : "false";
-            } else if (wert instanceof String) {
-                String s = (String) wert;
-                if ("1".equals(s) || "true".equalsIgnoreCase(s)) {
-                    return "true";
-                } else if ("0".equals(s) || "false".equalsIgnoreCase(s)) {
-                    return "false";
-                }
+   /**
+ * Formatiert einen Wert für die Verwendung in INSERT-Statements.
+ * Korrigierte Version mit verbesserter Datum/Zeit-Behandlung.
+ * 
+ * @param wert Der zu formatierende Wert
+ * @param oracleTyp Der Oracle-Datentyp des Werts
+ * @param postgresTyp Der PostgreSQL-Datentyp der Spalte
+ * @return Der formatierte Wert als String
+ */
+private String formatierteWert(Object wert, String oracleTyp, String postgresTyp) {
+    // Behandlung für PostgreSQL BOOLEAN
+    if (postgresTyp != null && postgresTyp.equalsIgnoreCase("BOOLEAN")) {
+        if (wert instanceof Number) {
+            int num = ((Number) wert).intValue();
+            return (num == 1) ? "true" : "false";
+        } else if (wert instanceof Boolean) {
+            return (Boolean) wert ? "true" : "false";
+        } else if (wert instanceof String) {
+            String s = (String) wert;
+            if ("1".equals(s) || "true".equalsIgnoreCase(s)) {
+                return "true";
+            } else if ("0".equals(s) || "false".equalsIgnoreCase(s)) {
+                return "false";
             }
-            return wert.toString();
         }
-        
-        // Strings escapen
-        if (wert instanceof String || wert instanceof Character) {
-            return "'" + this.escapeStringWert(wert.toString()) + "'";
-        }
-        
-        // Datum/Timestamp
-        if (wert instanceof Date || wert instanceof Timestamp) {
-            return "'" + wert.toString() + "'";
-        }
-        
-        // Alles andere direkt
         return wert.toString();
     }
+    
+    // Strings escapen
+    if (wert instanceof String || wert instanceof Character) {
+        return "'" + this.escapeStringWert(wert.toString()) + "'";
+    }
+    
+    // Spezielle Behandlung für DATE-Spalten
+    if (postgresTyp != null && postgresTyp.equalsIgnoreCase("DATE")) {
+        if (wert instanceof Date) {
+            // Oracle DATE zu PostgreSQL DATE
+            return "'" + wert.toString() + "'";
+        } else if (wert instanceof Timestamp) {
+            // Falls Oracle DATE als Timestamp kommt, nur Datum extrahieren
+            Timestamp ts = (Timestamp) wert;
+            return "'" + ts.toLocalDateTime().toLocalDate().toString() + "'";
+        }
+    }
+    
+    // Spezielle Behandlung für TIMESTAMP-Spalten
+    if (postgresTyp != null && postgresTyp.equalsIgnoreCase("TIMESTAMP")) {
+        if (wert instanceof Timestamp) {
+            return "'" + wert.toString() + "'";
+        } else if (wert instanceof Date) {
+            // Oracle DATE mit Zeit-Information zu TIMESTAMP
+            return "'" + wert.toString() + "'";
+        }
+    }
+    
+    // Generische Datum/Timestamp-Behandlung (Fallback)
+    if (wert instanceof Date || wert instanceof Timestamp) {
+        return "'" + wert.toString() + "'";
+    }
+    
+    // Alles andere direkt
+    return wert.toString();
+}
 
     /**
      * Escaped einen String-Wert für SQL.
@@ -1036,118 +1055,156 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
     }
 
     /**
-     * Konvertiert Oracle-spezifische Default-Werte zu PostgreSQL-Syntax.
-     * 
-     * @param defaultWert Der Oracle Default-Wert
-     * @return Der konvertierte PostgreSQL Default-Wert
-     */
-    private String konvertiereOracleDefaultZuPostgres(String defaultWert, String spaltenTyp) {
-        if (defaultWert == null || defaultWert.trim().isEmpty()) {
-            return "";
-        }
-        
-        String trimmedWert = defaultWert.trim();
-        
-            // Boolean-Konvertierung für BOOLEAN-Spalten
-         if ("BOOLEAN".equalsIgnoreCase(spaltenTyp)) {
+ * Konvertiert Oracle-spezifische Default-Werte zu PostgreSQL-Syntax.
+ * Korrigierte Version mit Unterstützung für String-Konkatenation
+ * 
+ * @param defaultWert Der Oracle Default-Wert
+ * @param spaltenTyp Der PostgreSQL-Spaltentyp
+ * @return Der konvertierte PostgreSQL Default-Wert
+ */
+private String konvertiereOracleDefaultZuPostgres(String defaultWert, String spaltenTyp) {
+    if (defaultWert == null || defaultWert.trim().isEmpty()) {
+        return "";
+    }
+    
+    String trimmedWert = defaultWert.trim();
+    
+    // Boolean-Konvertierung für BOOLEAN-Spalten
+    if ("BOOLEAN".equalsIgnoreCase(spaltenTyp)) {
         if ("0".equals(trimmedWert)) {
             return "false";
         } else if ("1".equals(trimmedWert)) {
             return "true";
         }
     }
-        if (trimmedWert.toUpperCase().equals("SYSDATE")) {
-            return "CURRENT_TIMESTAMP";
-        } else if (trimmedWert.toUpperCase().equals("USER")) {
-            return "CURRENT_USER";
-        } else if (trimmedWert.toUpperCase().equals("SYS_GUID()")) {
-            return "gen_random_uuid()";
-        } else if (trimmedWert.toUpperCase().contains(".NEXTVAL")) {
-            String sequenceName = trimmedWert.substring(0, trimmedWert.toUpperCase().indexOf(".NEXTVAL"));
-            return "nextval('" + sequenceName + "')";
-        } else {
-            return trimmedWert;
-        }
-    }
-
-   /**
- * Migriert Spaltenkommentare für eine Tabelle mit Unterstützung für mehrzeilige Kommentare.
- * 
- * @param tabellenName Der Name der Tabelle
- * @return SQL-Statements für Spaltenkommentare
- * @throws SQLException Bei Datenbankfehlern
- */
-private String migriereSpaltenKommentare(String tabellenName) throws SQLException {
-    if (!this.konfiguration.isSpaltenKommentareUebertragen()) {
-        return "";
+    
+    // WICHTIG: String-Konkatenation mit + Operator behandeln
+    if (trimmedWert.contains("+") && trimmedWert.contains("\"")) {
+        Logger.info("Oracle String-Konkatenation erkannt: " + trimmedWert);
+        String postgresWert = konvertiereOracleStringKonkatenation(trimmedWert);
+        Logger.info("Konvertiert zu PostgreSQL: " + postgresWert);
+        return postgresWert;
     }
     
-    StringBuilder sql = new StringBuilder();
-    sql.append("\n-- Spalten-Kommentare für Tabelle ").append(tabellenName).append("\n");
-    
-    String query = "SELECT COLUMN_NAME, COMMENTS FROM USER_COL_COMMENTS " +
-                  "WHERE TABLE_NAME = '" + tabellenName.toUpperCase() + "' " +
-                  "AND COMMENTS IS NOT NULL ORDER BY COLUMN_NAME";
-    
-    try (Statement stmt = this.oracleConnection.createStatement();
-         ResultSet rs = stmt.executeQuery(query)) {
-        
-        while (rs.next()) {
-            String columnName = rs.getString("COLUMN_NAME");
-            String comment = rs.getString("COMMENTS");
-            
-            List<String> ignorierteSpalten = this.konfiguration.getIgnorierteSpalten(tabellenName);
-            
-            if (!ignorierteSpalten.contains(columnName) && comment != null && !comment.trim().isEmpty()) {
-                
-                // Prüfen ob der Kommentar mehrzeilig ist
-                if (comment.contains("\n") || comment.contains("\r")) {
-                    // Mehrzeilige Kommentare mit $$ Syntax
-                    String bereinigerKommentar = bereinigeMehrzeiligerKommentar(comment);
-                    sql.append("COMMENT ON COLUMN ").append(tabellenName).append(".")
-                       .append(columnName).append(" IS $$").append(bereinigerKommentar).append("$$;\n");
-                } else {
-                    // Einzeilige Kommentare mit einfachen Anführungszeichen
-                    String bereinigerKommentar = comment.replace("'", "''").trim();
-                    sql.append("COMMENT ON COLUMN ").append(tabellenName).append(".")
-                       .append(columnName).append(" IS '").append(bereinigerKommentar).append("';\n");
-                }
-            }
-        }
+    // Standard Oracle-Funktionen
+    if (trimmedWert.toUpperCase().equals("SYSDATE")) {
+        return "CURRENT_DATE";
+    } else if (trimmedWert.toUpperCase().equals("SYSTIMESTAMP")) {
+        return "CURRENT_TIMESTAMP";
+    } else if (trimmedWert.toUpperCase().equals("USER")) {
+        return "CURRENT_USER";
+    } else if (trimmedWert.toUpperCase().equals("SYS_GUID()")) {
+        return "gen_random_uuid()";
+    } else if (trimmedWert.toUpperCase().contains(".NEXTVAL")) {
+        String sequenceName = trimmedWert.substring(0, trimmedWert.toUpperCase().indexOf(".NEXTVAL"));
+        return "nextval('" + sequenceName + "')";
+    } else {
+        return trimmedWert;
     }
-    
-    return sql.toString();
 }
 
 /**
- * Bereinigt mehrzeilige Kommentare für PostgreSQL $$ Syntax.
+ * Konvertiert Oracle String-Konkatenation mit + Operator zu PostgreSQL || Operator
  * 
- * @param kommentar Der ursprüngliche mehrzeilige Kommentar
- * @return Der bereinigte Kommentar
+ * @param oracleWert Der Oracle Default-Wert mit String-Konkatenation
+ * @return Der konvertierte PostgreSQL-Wert
  */
-private String bereinigeMehrzeiligerKommentar(String kommentar) {
-    if (kommentar == null) {
-        return "";
+private String konvertiereOracleStringKonkatenation(String oracleWert) {
+    if (oracleWert == null || oracleWert.trim().isEmpty()) {
+        return "''";
     }
     
-    // $$ in Kommentaren durch alternative Zeichen ersetzen, da sie die Syntax stören würden
-    String bereinigt = kommentar.replace("$$", "<<>>");
+    String wert = oracleWert.trim();
     
-    // Trim jede Zeile einzeln für bessere Formatierung
-    String[] zeilen = bereinigt.split("\r?\n");
+    // Ersetze Oracle doppelte Anführungszeichen durch einfache
+    // und + Operator durch || für PostgreSQL
     StringBuilder result = new StringBuilder();
+    boolean inString = false;
+    boolean escaped = false;
     
-    for (int i = 0; i < zeilen.length; i++) {
-        result.append(zeilen[i].trim());
-        if (i < zeilen.length - 1) {
-            result.append("\n");
+    for (int i = 0; i < wert.length(); i++) {
+        char c = wert.charAt(i);
+        
+        if (escaped) {
+            result.append(c);
+            escaped = false;
+            continue;
+        }
+        
+        if (c == '\\') {
+            escaped = true;
+            result.append(c);
+            continue;
+        }
+        
+        if (c == '"') {
+            // Doppelte Anführungszeichen durch einfache ersetzen
+            result.append("'");
+            inString = !inString;
+        } else if (c == '+' && !inString) {
+            // + außerhalb von Strings durch || ersetzen
+            // Leerzeichen um den Operator herum entfernen/normalisieren
+            result.append(" || ");
+        } else if (c == ' ' && !inString) {
+            // Mehrfache Leerzeichen außerhalb von Strings normalisieren
+            if (result.length() > 0 && result.charAt(result.length() - 1) != ' ') {
+                result.append(c);
+            }
+        } else {
+            result.append(c);
         }
     }
     
-    Logger.info("Mehrzeiliger Kommentar bereinigt für $$ Syntax");
+    String konvertiert = result.toString().trim();
     
-    return result.toString();
+    // Sicherstellen, dass das Ergebnis gültig ist
+    if (konvertiert.isEmpty()) {
+        return "''";
+    }
+    
+    // Aufeinanderfolgende || bereinigen
+    konvertiert = konvertiert.replaceAll("\\|\\|\\s*\\|\\|", "||");
+    
+    return konvertiert;
 }
+
+    /**
+     * Migriert Spaltenkommentare für eine Tabelle.
+     * 
+     * @param tabellenName Der Name der Tabelle
+     * @return SQL-Statements für Spaltenkommentare
+     * @throws SQLException Bei Datenbankfehlern
+     */
+    private String migriereSpaltenKommentare(String tabellenName) throws SQLException {
+        if (!this.konfiguration.isSpaltenKommentareUebertragen()) {
+            return "";
+        }
+        
+        StringBuilder sql = new StringBuilder();
+        sql.append("\n-- Spalten-Kommentare für Tabelle ").append(tabellenName).append("\n");
+        
+        String query = "SELECT COLUMN_NAME, COMMENTS FROM USER_COL_COMMENTS " +
+                      "WHERE TABLE_NAME = '" + tabellenName.toUpperCase() + "' " +
+                      "AND COMMENTS IS NOT NULL ORDER BY COLUMN_NAME";
+        
+        try (Statement stmt = this.oracleConnection.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+            
+            while (rs.next()) {
+                String columnName = rs.getString("COLUMN_NAME");
+                String comment = rs.getString("COMMENTS");
+                
+                List<String> ignorierteSpalten = this.konfiguration.getIgnorierteSpalten(tabellenName);
+                
+                if (!ignorierteSpalten.contains(columnName) && comment != null && !comment.trim().isEmpty()) {
+                    sql.append("COMMENT ON COLUMN ").append(tabellenName).append(".")
+                       .append(columnName).append(" IS '").append(comment.replace("'", "''")).append("';\n");
+                }
+            }
+        }
+        
+        return sql.toString();
+    }
     
     /**
      * Speichert SQL-Code in einer Datei.
