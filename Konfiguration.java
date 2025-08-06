@@ -514,21 +514,65 @@ public class Konfiguration {
         if (sequenzName == null || sequenzName.trim().isEmpty()) {
             return false;
         }
-        return !getSequenzenBlacklist().contains(sequenzName.toUpperCase());
+        
+        // Prüfung 1: Sequenz-spezifische Blacklist
+        if (getSequenzenBlacklist().contains(sequenzName.toUpperCase())) {
+            return false;
+        }
+        
+        // Prüfung 2: Tabellen-Blacklist - intelligente Sequenz-zu-Tabelle Zuordnung
+        String zugehoerigeTabelle = ermittleZugehoerigeTabelleFuerSequenz(sequenzName);
+        if (zugehoerigeTabelle != null && !sollTabelleMigriert(zugehoerigeTabelle)) {
+            return false;
+        }
+        
+        return true;
     }
     
-    public boolean sollIndexMigriert(String indexName) {
+    public boolean sollIndexMigriert(String indexName, String tableName) {
         if (indexName == null || indexName.trim().isEmpty()) {
             return false;
         }
-        return !getIndizesBlacklist().contains(indexName.toUpperCase());
+        
+        // Prüfung 1: Index-spezifische Blacklist
+        if (getIndizesBlacklist().contains(indexName.toUpperCase())) {
+            return false;
+        }
+        
+        // Prüfung 2: Tabellen-Blacklist - wenn die zugehörige Tabelle nicht migriert wird
+        if (tableName != null && !sollTabelleMigriert(tableName)) {
+            return false;
+        }
+        
+        return true;
     }
     
-    public boolean sollConstraintMigriert(String constraintName) {
+    // Backward-Kompatibilität: Überladene Methode ohne tableName
+    public boolean sollIndexMigriert(String indexName) {
+        return sollIndexMigriert(indexName, null);
+    }
+    
+    public boolean sollConstraintMigriert(String constraintName, String tableName) {
         if (constraintName == null || constraintName.trim().isEmpty()) {
             return false;
         }
-        return !getConstraintsBlacklist().contains(constraintName.toUpperCase());
+        
+        // Prüfung 1: Constraint-spezifische Blacklist
+        if (getConstraintsBlacklist().contains(constraintName.toUpperCase())) {
+            return false;
+        }
+        
+        // Prüfung 2: Tabellen-Blacklist - wenn die zugehörige Tabelle nicht migriert wird
+        if (tableName != null && !sollTabelleMigriert(tableName)) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // Backward-Kompatibilität: Überladene Methode ohne tableName
+    public boolean sollConstraintMigriert(String constraintName) {
+        return sollConstraintMigriert(constraintName, null);
     }
     
     public boolean sollViewMigriert(String viewName) {
@@ -536,5 +580,51 @@ public class Konfiguration {
             return false;
         }
         return !getViewsBlacklist().contains(viewName.toUpperCase());
+    }
+    
+    /**
+     * Ermittelt die zugehörige Tabelle für eine Sequenz basierend auf typischen Namenskonventionen.
+     * Diese Methode kann überschrieben werden, um projektspezifische Namenskonventionen zu unterstützen.
+     * 
+     * @param sequenzName Der Name der Sequenz
+     * @return Der vermutete Tabellenname oder null, wenn kein Pattern erkannt wird
+     */
+    protected String ermittleZugehoerigeTabelleFuerSequenz(String sequenzName) {
+        if (sequenzName == null || sequenzName.trim().isEmpty()) {
+            return null;
+        }
+        
+        String seq = sequenzName.toUpperCase().trim();
+        
+        // Pattern 1: TABELLEN_NAME_SEQ
+        if (seq.endsWith("_SEQ")) {
+            return seq.substring(0, seq.length() - 4);
+        }
+        
+        // Pattern 2: SEQ_TABELLEN_NAME
+        if (seq.startsWith("SEQ_")) {
+            return seq.substring(4);
+        }
+        
+        // Pattern 3: TABELLEN_NAME_ID_SEQ
+        if (seq.endsWith("_ID_SEQ")) {
+            return seq.substring(0, seq.length() - 7);
+        }
+        
+        // Pattern 4: TABELLEN_NAME_SEQUENCE
+        if (seq.endsWith("_SEQUENCE")) {
+            return seq.substring(0, seq.length() - 9);
+        }
+        
+        // Pattern 5: Weitere gängige Sequenz-Suffixe
+        String[] suffixe = {"_S", "_SQ", "_SEQUENCE_ID", "_SEQ_ID", "_NEXTVAL"};
+        for (String suffix : suffixe) {
+            if (seq.endsWith(suffix)) {
+                return seq.substring(0, seq.length() - suffix.length());
+            }
+        }
+        
+        // Kein Pattern erkannt
+        return null;
     }
 }
