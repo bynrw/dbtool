@@ -429,18 +429,15 @@ private String mappeOracleZuPostgresDatentyp(String oracleTyp, String spaltenNam
     
     // Oracle DATE -> PostgreSQL DATE (KORRIGIERT)
     if (oracleTyp.equals("DATE")) {
-        Logger.info("Oracle DATE-Spalte '" + spaltenName + "' wird zu DATE konvertiert");
-        return "DATE";
+        return "Timestamp"; // PostgreSQL DATE wird als TIMESTAMP behandelt
     }
     
     // Oracle TIMESTAMP -> PostgreSQL TIMESTAMP (KORRIGIERT)
     if (oracleTyp.equals("TIMESTAMP")) {
-        Logger.info("Oracle TIMESTAMP-Spalte '" + spaltenName + "' wird zu TIMESTAMP konvertiert");
         return "TIMESTAMP";
     }
     
     if (oracleTyp.startsWith("TIMESTAMP(")) {
-        Logger.info("Oracle TIMESTAMP-Spalte '" + spaltenName + "' wird zu TIMESTAMP konvertiert");
         return "TIMESTAMP";
     }
     
@@ -703,9 +700,9 @@ private String formatierteWert(Object wert, String oracleTyp, String postgresTyp
             while (rs.next()) {
                 String sequenzName = rs.getString("SEQUENCE_NAME");
                 
-                // Prüfen ob Sequenz migriert werden soll
+                // Prüfen ob Sequenz migriert werden soll (inkl. Tabellen-Blacklist)
                 if (!this.konfiguration.sollSequenzMigriert(sequenzName)) {
-                    Logger.info("Überspringe Sequenz (in Blacklist): " + sequenzName);
+                    Logger.info("Überspringe Sequenz (Blacklist oder zugehörige Tabelle): " + sequenzName);
                     continue;
                 }
                 
@@ -829,65 +826,110 @@ private String formatierteWert(Object wert, String oracleTyp, String postgresTyp
     }
 
     /**
-     * Migriert alle Indizes aus der Oracle-Datenbank.
-     * 
-     * @throws SQLException Bei Datenbankfehlern
-     * @throws IOException Bei Dateisystemfehlern
-     */
-    private void migrierenIndizes() throws SQLException, IOException {
-        Logger.info("Beginne Migration der Indizes");
+ * Migriert alle Indizes aus der Oracle-Datenbank.
+ * 
+ * @throws SQLException Bei Datenbankfehlern
+ * @throws IOException Bei Dateisystemfehlern
+ */
+private void migrierenIndizes() throws SQLException, IOException {
+    Logger.info("Beginne Migration der Indizes");
+    
+    // Zuerst alle Primary Key Constraints ermitteln
+    Map<String, String> primaryKeyIndizes = this.ermittlePrimaryKeyIndizes();
+    
+    String query = "SELECT i.INDEX_NAME, i.TABLE_NAME, i.UNIQUENESS, " +
+                  "LISTAGG(ic.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS COLUMNS " +
+                  "FROM USER_INDEXES i " +
+                  "JOIN USER_IND_COLUMNS ic ON i.INDEX_NAME = ic.INDEX_NAME " +
+                  "WHERE i.INDEX_TYPE = 'NORMAL' AND i.GENERATED = 'N' " +
+                  "GROUP BY i.INDEX_NAME, i.TABLE_NAME, i.UNIQUENESS " +
+                  "ORDER BY i.TABLE_NAME, i.INDEX_NAME";
+    
+    StringBuilder sql = new StringBuilder();
+    sql.append("-- Indizes Migration\n");
+    sql.append("-- Erstellt von Oracle-zu-PostgreSQL Migration\n");
+    sql.append("-- HINWEIS: Primary Key Indizes werden automatisch von PostgreSQL erstellt\n\n");
+    
+    try (Statement stmt = this.oracleConnection.createStatement();
+         ResultSet rs = stmt.executeQuery(query)) {
         
-        String query = "SELECT i.INDEX_NAME, i.TABLE_NAME, i.UNIQUENESS, " +
-                      "LISTAGG(ic.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS COLUMNS " +
-                      "FROM USER_INDEXES i " +
-                      "JOIN USER_IND_COLUMNS ic ON i.INDEX_NAME = ic.INDEX_NAME " +
-                      "WHERE i.INDEX_TYPE = 'NORMAL' AND i.GENERATED = 'N' " +
-                      "GROUP BY i.INDEX_NAME, i.TABLE_NAME, i.UNIQUENESS " +
-                      "ORDER BY i.TABLE_NAME, i.INDEX_NAME";
-        
-        StringBuilder sql = new StringBuilder();
-        sql.append("-- Indizes Migration\n");
-        sql.append("-- Erstellt von Oracle-zu-PostgreSQL Migration\n\n");
-        
-        try (Statement stmt = this.oracleConnection.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+        while (rs.next()) {
+            String indexName = rs.getString("INDEX_NAME");
+            String tableName = rs.getString("TABLE_NAME");
             
-            while (rs.next()) {
-                String indexName = rs.getString("INDEX_NAME");
+            // Prüfen ob Index migriert werden soll (inkl. Tabellen-Blacklist)
+            if(!this.konfiguration.sollIndexMigriert(indexName, tableName)) {
+                Logger.info("Überspringe Index (Blacklist oder zugehörige Tabelle): " + indexName + " -> Tabelle: " + tableName);
+                continue;
+            }
+            
+            String uniqueness = rs.getString("UNIQUENESS");
+            String columns = rs.getString("COLUMNS");
+            
+            // Prüfen ob dieser Index zu einem Primary Key gehört
+            if (primaryKeyIndizes.containsKey(indexName)) {
+                sql.append("-- ÜBERSPRUNGEN: Index ").append(indexName)
+                   .append(" auf Tabelle ").append(tableName)
+                   .append(" - wird automatisch durch PRIMARY KEY erstellt\n\n");
                 
-                // Prüfen ob Index migriert werden soll
-                if (!this.konfiguration.sollIndexMigriert(indexName)) {
-                    Logger.info("Überspringe Index (in Blacklist): " + indexName);
-                    continue;
-                }
-                
-                String tableName = rs.getString("TABLE_NAME");
-                String uniqueness = rs.getString("UNIQUENESS");
-                String columns = rs.getString("COLUMNS");
-                
-                sql.append("CREATE ");
-                if ("UNIQUE".equals(uniqueness)) {
-                    sql.append("UNIQUE ");
-                }
-                
-                sql.append("INDEX ").append(indexName);
-                sql.append(" ON ").append(tableName);
-                sql.append(" (").append(columns).append(");\n\n");
+                Logger.info("Überspringe Index " + indexName + " - wird automatisch durch PRIMARY KEY erstellt");
+                continue;
+            }
+            
+            // Index ist kein Primary Key Index - normal migrieren
+            sql.append("CREATE ");
+            if ("UNIQUE".equals(uniqueness)) {
+                sql.append("UNIQUE ");
+            }
+            
+            sql.append("INDEX ").append(indexName);
+            sql.append(" ON ").append(tableName);
+            sql.append(" (").append(columns).append(");\n\n");
+        }
+    }
+    
+    // Speichern der Indizes-SQL
+    if (this.konfiguration.isOrdnerErstellen()) {
+        String indexDateiname = this.erzeugeStrukturiertenDateinamen("indexes", "sql");
+        this.speichereSQL(this.konfiguration.getOrdnerIndizes() + File.separator + indexDateiname, 
+                         sql.toString(), true);
+    } else {
+        String indexDateiname = this.erzeugeStrukturiertenDateinamen("indexes", "sql");
+        this.speichereSQL(indexDateiname, sql.toString(), true);
+    }
+    
+    Logger.info("Indizes-Migration abgeschlossen");
+}
+
+/**
+ * Ermittelt alle Indizes, die zu Primary Key Constraints gehören.
+ * 
+ * @return Map mit Index-Name als Key und Constraint-Name als Value
+ * @throws SQLException Bei Datenbankfehlern
+ */
+private Map<String, String> ermittlePrimaryKeyIndizes() throws SQLException {
+    Map<String, String> primaryKeyIndizes = new HashMap<>();
+    
+    String query = "SELECT c.CONSTRAINT_NAME, c.INDEX_NAME " +
+                  "FROM USER_CONSTRAINTS c " +
+                  "WHERE c.CONSTRAINT_TYPE = 'P' " +
+                  "AND c.INDEX_NAME IS NOT NULL";
+    
+    try (Statement stmt = this.oracleConnection.createStatement();
+         ResultSet rs = stmt.executeQuery(query)) {
+        
+        while (rs.next()) {
+            String constraintName = rs.getString("CONSTRAINT_NAME");
+            String indexName = rs.getString("INDEX_NAME");
+            
+            if (indexName != null) {
+                primaryKeyIndizes.put(indexName, constraintName);
             }
         }
-        
-        // Speichern der Indizes-SQL
-        if (this.konfiguration.isOrdnerErstellen()) {
-            String indexDateiname = this.erzeugeStrukturiertenDateinamen("indexes", "sql");
-            this.speichereSQL(this.konfiguration.getOrdnerIndizes() + File.separator + indexDateiname, 
-                             sql.toString(), true);
-        } else {
-            String indexDateiname = this.erzeugeStrukturiertenDateinamen("indexes", "sql");
-            this.speichereSQL(indexDateiname, sql.toString(), true);
-        }
-        
-        Logger.info("Indizes-Migration abgeschlossen");
     }
+    
+    return primaryKeyIndizes;
+}
 
     /**
      * Migriert alle Constraints aus der Oracle-Datenbank.
@@ -942,20 +984,18 @@ private String formatierteWert(Object wert, String oracleTyp, String postgresTyp
         try (Statement stmt = this.oracleConnection.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
             
-            while (rs.next()) {
-                String constraintName = rs.getString("CONSTRAINT_NAME");
-                
-                // Prüfen ob Constraint migriert werden soll
-                if (!this.konfiguration.sollConstraintMigriert(constraintName)) {
-                    Logger.info("Überspringe Primary Key Constraint (in Blacklist): " + constraintName);
-                    continue;
-                }
-                
-                String tableName = rs.getString("TABLE_NAME");
-                String columns = rs.getString("COLUMNS");
-                
-                sql.append("ALTER TABLE ").append(tableName);
-                sql.append(" ADD CONSTRAINT ").append(constraintName);
+        while (rs.next()) {
+            String constraintName = rs.getString("CONSTRAINT_NAME");
+            String tableName = rs.getString("TABLE_NAME");
+            
+            // Prüfen ob Constraint migriert werden soll (inkl. Tabellen-Blacklist)
+            if (!this.konfiguration.sollConstraintMigriert(constraintName, tableName)) {
+                Logger.info("Überspringe Primary Key Constraint (Blacklist oder zugehörige Tabelle): " + constraintName + " -> Tabelle: " + tableName);
+                continue;
+            }
+            
+            String columns = rs.getString("COLUMNS");                sql.append("ALTER TABLE ").append(tableName);
+                sql.append(" ADD CONSTRAINT ").append(tableName + "_PK");
                 sql.append(" PRIMARY KEY (").append(columns).append(");\n");
             }
         }
@@ -983,22 +1023,28 @@ private String formatierteWert(Object wert, String oracleTyp, String postgresTyp
         try (Statement stmt = this.oracleConnection.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
             
-            while (rs.next()) {
-                String constraintName = rs.getString("CONSTRAINT_NAME");
-                
-                // Prüfen ob Constraint migriert werden soll
-                if (!this.konfiguration.sollConstraintMigriert(constraintName)) {
-                    Logger.info("Überspringe Foreign Key Constraint (in Blacklist): " + constraintName);
-                    continue;
-                }
-                
-                String tableName = rs.getString("TABLE_NAME");
-                String columns = rs.getString("COLUMNS");
-                String refTableName = rs.getString("R_TABLE_NAME");
-                String refColumns = rs.getString("R_COLUMNS");
-                
+        while (rs.next()) {
+            String constraintName = rs.getString("CONSTRAINT_NAME");
+            String tableName = rs.getString("TABLE_NAME");
+            String refTableName = rs.getString("R_TABLE_NAME");
+            
+            // Prüfung 1: Constraint-spezifische Blacklist & Quell-Tabelle
+            if (!this.konfiguration.sollConstraintMigriert(constraintName, tableName)) {
+                Logger.info("Überspringe Foreign Key Constraint (Blacklist oder Quell-Tabelle): " + constraintName + " -> Tabelle: " + tableName);
+                continue;
+            }
+            
+            // Prüfung 2: Ziel-Tabelle separat prüfen
+            if (!this.konfiguration.sollTabelleMigriert(refTableName)) {
+                Logger.info("Überspringe Foreign Key Constraint (Ziel-Tabelle in Blacklist): " + constraintName + " -> Referenz-Tabelle: " + refTableName);
+                continue;
+            }
+            
+            String columns = rs.getString("COLUMNS");
+            String refColumns = rs.getString("R_COLUMNS");
+
                 sql.append("ALTER TABLE ").append(tableName);
-                sql.append(" ADD CONSTRAINT ").append(constraintName);
+                sql.append(" ADD CONSTRAINT ").append(tableName + "_" + refColumns + "_FK");
                 sql.append(" FOREIGN KEY (").append(columns).append(")");
                 sql.append(" REFERENCES ").append(refTableName);
                 sql.append(" (").append(refColumns).append(");\n");
@@ -1021,19 +1067,17 @@ private String formatierteWert(Object wert, String oracleTyp, String postgresTyp
         try (Statement stmt = this.oracleConnection.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
             
-            while (rs.next()) {
-                String constraintName = rs.getString("CONSTRAINT_NAME");
-                
-                // Prüfen ob Constraint migriert werden soll
-                if (!this.konfiguration.sollConstraintMigriert(constraintName)) {
-                    Logger.info("Überspringe Check Constraint (in Blacklist): " + constraintName);
-                    continue;
-                }
-                
-                String tableName = rs.getString("TABLE_NAME");
-                String condition = rs.getString("SEARCH_CONDITION");
-                
-                sql.append("ALTER TABLE ").append(tableName);
+        while (rs.next()) {
+            String constraintName = rs.getString("CONSTRAINT_NAME");
+            String tableName = rs.getString("TABLE_NAME");
+            
+            // Prüfen ob Constraint migriert werden soll (inkl. Tabellen-Blacklist)
+            if (!this.konfiguration.sollConstraintMigriert(constraintName, tableName)) {
+                Logger.info("Überspringe Check Constraint (Blacklist oder zugehörige Tabelle): " + constraintName + " -> Tabelle: " + tableName);
+                continue;
+            }
+            
+            String condition = rs.getString("SEARCH_CONDITION");                sql.append("ALTER TABLE ").append(tableName);
                 sql.append(" ADD CONSTRAINT ").append(constraintName);
                 sql.append(" CHECK (").append(condition).append(");\n");
             }
