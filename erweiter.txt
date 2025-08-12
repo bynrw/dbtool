@@ -1,0 +1,110 @@
+public class SQLImporter {
+    
+    private static Map<String, Properties> verbindungen = new HashMap<>();
+    
+    public static void main(String[] args) {
+        String configFile = args.length > 0 ? args[0] : "config.properties";
+        
+        if (!ladeAlleVerbindungen(configFile)) {
+            System.err.println("FEHLER: Konnte Konfiguration nicht laden!");
+            return;
+        }
+        
+        // Benutzer Verbindung wählen lassen
+        String gewaehlteVerbindung = waehleVerbindung();
+        
+        if (gewaehlteVerbindung == null) {
+            System.err.println("Keine Verbindung gewählt. Abbruch.");
+            return;
+        }
+        
+        // Rest des Codes...
+    }
+    
+    private static boolean ladeAlleVerbindungen(String configFile) {
+        try {
+            Properties props = new Properties();
+            props.load(new FileInputStream(configFile));
+            
+            // Finde alle postgresql.*.host Einträge
+            for (String key : props.stringPropertyNames()) {
+                if (key.startsWith("postgresql.") && key.endsWith(".host")) {
+                    String verbindungsName = key.substring("postgresql.".length(), key.length() - ".host".length());
+                    
+                    Properties verbindungProps = new Properties();
+                    verbindungProps.setProperty("host", props.getProperty("postgresql." + verbindungsName + ".host"));
+                    verbindungProps.setProperty("port", props.getProperty("postgresql." + verbindungsName + ".port", "5432"));
+                    verbindungProps.setProperty("database", props.getProperty("postgresql." + verbindungsName + ".database"));
+                    verbindungProps.setProperty("user", props.getProperty("postgresql." + verbindungsName + ".user"));
+                    verbindungProps.setProperty("password", props.getProperty("postgresql." + verbindungsName + ".password"));
+                    
+                    verbindungen.put(verbindungsName, verbindungProps);
+                    System.out.println("INFO: Verbindung '" + verbindungsName + "' geladen");
+                }
+            }
+            
+            return !verbindungen.isEmpty();
+            
+        } catch (Exception e) {
+            System.err.println("FEHLER beim Laden: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    private static String waehleVerbindung() {
+        if (verbindungen.size() == 1) {
+            return verbindungen.keySet().iterator().next();
+        }
+        
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("\nVerfügbare Datenbankverbindungen:");
+        
+        List<String> verbindungsListe = new ArrayList<>(verbindungen.keySet());
+        for (int i = 0; i < verbindungsListe.size(); i++) {
+            String name = verbindungsListe.get(i);
+            Properties props = verbindungen.get(name);
+            System.out.println((i + 1) + " = " + name + " (" + props.getProperty("host") + ":" + props.getProperty("port") + "/" + props.getProperty("database") + ")");
+        }
+        
+        System.out.print("Wähle Verbindung (1-" + verbindungsListe.size() + "): ");
+        try {
+            int choice = Integer.parseInt(scanner.nextLine()) - 1;
+            if (choice >= 0 && choice < verbindungsListe.size()) {
+                return verbindungsListe.get(choice);
+            }
+        } catch (NumberFormatException e) {
+            System.err.println("Ungültige Eingabe!");
+        }
+        
+        return null;
+    }
+    
+    private static Connection getConnection(String verbindungsName) throws SQLException {
+        Properties props = verbindungen.get(verbindungsName);
+        
+        String url = "jdbc:postgresql://" + props.getProperty("host") + ":" + 
+                     props.getProperty("port") + "/" + props.getProperty("database");
+        
+        return DriverManager.getConnection(url, props.getProperty("user"), props.getProperty("password"));
+    }
+	
+	# Primäre PostgreSQL-Verbindung
+postgresql.primary.host=23.222.333.12
+postgresql.primary.port=5252
+postgresql.primary.database=byby_sb2_qs
+postgresql.primary.user=user1
+postgresql.primary.password=pass1
+
+# Sekundäre PostgreSQL-Verbindung
+postgresql.secondary.host=localhost
+postgresql.secondary.port=5432
+postgresql.secondary.database=backup_db
+postgresql.secondary.user=user2
+postgresql.secondary.password=pass2
+
+# Test-Verbindung
+postgresql.test.host=192.168.1.50
+postgresql.test.port=5432
+postgresql.test.database=test_db
+postgresql.test.user=test_user
+postgresql.test.password=test_pass
