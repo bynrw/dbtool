@@ -12,7 +12,7 @@ public class SQLImporter {
     
     public static void main(String[] args) {
         // Properties-Datei laden
-        String configFile = args.length > 0 ? args[0] : "config.properties";
+        String configFile = args.length > 0 ? args[0] : "config_sqlimporter.properties";
         
         if (!ladeAlleVerbindungen(configFile)) {
             System.err.println("FEHLER: Konnte Konfiguration nicht laden!");
@@ -174,15 +174,49 @@ public class SQLImporter {
             File file = new File(configFile);
             if (!file.exists()) {
                 System.err.println("FEHLER: Konfigurationsdatei nicht gefunden: " + configFile);
+                System.err.println("INFO: Vollständiger Pfad: " + file.getAbsolutePath());
+                System.err.println("INFO: Arbeitsverzeichnis: " + System.getProperty("user.dir"));
+                
+                // Prüfe alternative Dateinamen
+                String[] alternativen = {
+                    "config_sqlimporter.properties",
+                    "sqlimporter-config.properties", 
+                    "config.properties"
+                };
+                
+                System.err.println("INFO: Suche nach alternativen Dateien...");
+                for (String alt : alternativen) {
+                    File altFile = new File(alt);
+                    if (altFile.exists()) {
+                        System.err.println("INFO: Alternative gefunden: " + alt);
+                        System.err.println("INFO: Verwende: java ... SQLImporter " + alt);
+                    }
+                }
+                
                 return false;
             }
             
             props.load(new FileInputStream(file));
+            System.out.println("INFO: Konfigurationsdatei erfolgreich geladen: " + configFile);
+            
+            // Debug: Zeige alle geladenen Properties
+            System.out.println("DEBUG: Geladene Properties:");
+            for (String key : props.stringPropertyNames()) {
+                if (key.contains("password") || key.contains("passwort")) {
+                    System.out.println("  " + key + " = ****");
+                } else {
+                    System.out.println("  " + key + " = " + props.getProperty(key));
+                }
+            }
             
             // Neue einfache Variante: postgres.url, postgres.benutzer, postgres.passwort
             String url = props.getProperty("postgres.url");
             String benutzer = props.getProperty("postgres.benutzer");
             String passwort = props.getProperty("postgres.passwort");
+            
+            System.out.println("DEBUG: postgres.url = " + url);
+            System.out.println("DEBUG: postgres.benutzer = " + benutzer);
+            System.out.println("DEBUG: postgres.passwort = " + (passwort != null ? "****" : null));
             
             if (url != null && benutzer != null && passwort != null) {
                 Properties verbindungProps = new Properties();
@@ -252,7 +286,18 @@ public class SQLImporter {
         for (int i = 0; i < verbindungsListe.size(); i++) {
             String name = verbindungsListe.get(i);
             Properties props = verbindungen.get(name);
-            System.out.println((i + 1) + " = " + name + " (" + props.getProperty("host") + ":" + props.getProperty("port") + "/" + props.getProperty("database") + ")");
+            
+            // Prüfe ob es eine direkte URL ist
+            String url = props.getProperty("url");
+            if (url != null) {
+                System.out.println((i + 1) + " = " + name + " (" + url + ")");
+            } else {
+                // Alte Variante mit Host/Port/Database
+                String host = props.getProperty("host", "unbekannt");
+                String port = props.getProperty("port", "5432");
+                String database = props.getProperty("database", "unbekannt");
+                System.out.println((i + 1) + " = " + name + " (" + host + ":" + port + "/" + database + ")");
+            }
         }
         
         Scanner scanner = new Scanner(System.in);
@@ -260,14 +305,10 @@ public class SQLImporter {
         try {
             int choice = Integer.parseInt(scanner.nextLine()) - 1;
             if (choice >= 0 && choice < verbindungsListe.size()) {
-                String gewaehlteVerbindung = verbindungsListe.get(choice);
-                scanner.close();
-                return gewaehlteVerbindung;
+                return verbindungsListe.get(choice);
             }
         } catch (NumberFormatException e) {
             System.err.println("Ungültige Eingabe!");
-        } finally {
-            scanner.close();
         }
         
         return null;
@@ -497,53 +538,4 @@ public class SQLImporter {
         return result.toString();
     }
 
-
-
-
-
-
-
-
-
-private static String waehleVerbindung() {
-    if (verbindungen.size() == 1) {
-        return verbindungen.keySet().iterator().next();
-    }
-    
-    System.out.println("\nVerfügbare Datenbankverbindungen:");
-    
-    List<String> verbindungsListe = new ArrayList<>(verbindungen.keySet());
-    for (int i = 0; i < verbindungsListe.size(); i++) {
-        String name = verbindungsListe.get(i);
-        Properties props = verbindungen.get(name);
-        
-        // Prüfe ob es eine direkte URL ist
-        String url = props.getProperty("url");
-        if (url != null) {
-            System.out.println((i + 1) + " = " + name + " (" + url + ")");
-        } else {
-            // Alte Variante mit Host/Port/Database
-            String host = props.getProperty("host", "unbekannt");
-            String port = props.getProperty("port", "5432");
-            String database = props.getProperty("database", "unbekannt");
-            System.out.println((i + 1) + " = " + name + " (" + host + ":" + port + "/" + database + ")");
-        }
-    }
-    
-    Scanner scanner = new Scanner(System.in);
-    System.out.print("Wähle Verbindung (1-" + verbindungsListe.size() + "): ");
-    try {
-        int choice = Integer.parseInt(scanner.nextLine()) - 1;
-        if (choice >= 0 && choice < verbindungsListe.size()) {
-            return verbindungsListe.get(choice);
-        }
-    } catch (NumberFormatException e) {
-        System.err.println("Ungültige Eingabe!");
-    }
-    
-    return null;
-}
-    
-    return null;
-}
 }
