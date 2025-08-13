@@ -497,4 +497,51 @@ public class SQLImporter {
         return result.toString();
     }
 
+
+
+
+
+
+
+
+
+private static String waehleVerbindung() {
+    if (verbindungen.size() == 1) {
+        return verbindungen.keySet().iterator().next();
+    }
+    
+    System.out.println("\nVerfügbare Datenbankverbindungen:");
+    
+    List<String> verbindungsListe = new ArrayList<>(verbindungen.keySet());
+    for (int i = 0; i < verbindungsListe.size(); i++) {
+        String name = verbindungsListe.get(i);
+        Properties props = verbindungen.get(name);
+        
+        // Prüfe ob es eine direkte URL ist
+        String url = props.getProperty("url");
+        if (url != null) {
+            System.out.println((i + 1) + " = " + name + " (" + url + ")");
+        } else {
+            // Alte Variante mit Host/Port/Database
+            String host = props.getProperty("host", "unbekannt");
+            String port = props.getProperty("port", "5432");
+            String database = props.getProperty("database", "unbekannt");
+            System.out.println((i + 1) + " = " + name + " (" + host + ":" + port + "/" + database + ")");
+        }
+    }
+    
+    Scanner scanner = new Scanner(System.in);
+    System.out.print("Wähle Verbindung (1-" + verbindungsListe.size() + "): ");
+    try {
+        int choice = Integer.parseInt(scanner.nextLine()) - 1;
+        if (choice >= 0 && choice < verbindungsListe.size()) {
+            String gewaehlteVerbindung = verbindungsListe.get(choice);
+            return gewaehlteVerbindung;
+        }
+    } catch (NumberFormatException e) {
+        System.err.println("Ungültige Eingabe!");
+    }
+    
+    return null;
+}
 }
