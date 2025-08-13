@@ -535,12 +535,14 @@ private static String waehleVerbindung() {
     try {
         int choice = Integer.parseInt(scanner.nextLine()) - 1;
         if (choice >= 0 && choice < verbindungsListe.size()) {
-            String gewaehlteVerbindung = verbindungsListe.get(choice);
-            return gewaehlteVerbindung;
+            return verbindungsListe.get(choice);
         }
     } catch (NumberFormatException e) {
         System.err.println("Ungültige Eingabe!");
     }
+    
+    return null;
+}
     
     return null;
 }
