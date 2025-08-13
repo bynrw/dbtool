@@ -1,5 +1,6 @@
 package de.dbmigration;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.sql.*;
 import java.util.*;
@@ -347,9 +348,9 @@ public class SQLImporter {
         conn.close();
         
         // Detaillierte Statistik ausgeben
-        System.out.println("\n" + "=".repeat(60));
+        System.out.println("\n" + new String(new char[60]).replace("\0", "="));
         System.out.println("MIGRATION ABGESCHLOSSEN - ZUSAMMENFASSUNG");
-        System.out.println("=".repeat(60));
+        System.out.println("\n" + new String(new char[60]).replace("\0", "="));
         System.out.println("Gesamt verarbeitete Dateien: " + gesamteDateien);
         System.out.println("Erfolgreich migriert: " + erfolgreicheDateien);
         System.out.println("Fehlgeschlagen: " + fehlgeschlageneTabellen.size());
@@ -366,11 +367,11 @@ public class SQLImporter {
         } else {
             System.err.println("\nSTATUS: Migration mit Fehlern abgeschlossen!");
         }
-        System.out.println("=".repeat(60));
+        System.out.println("\n" + new String(new char[60]).replace("\0", "="));
     }
     
     private static boolean fuehreSQLDateiAus(Connection conn, File sqlDatei) throws IOException, SQLException {
-        String inhalt = Files.readString(sqlDatei.toPath());
+        String inhalt = new String (Files.readAllBytes(sqlDatei.toPath()), StandardCharsets.UTF_8);
 
         // Bereinige den Inhalt - entferne nur echte Kommentarzeilen, nicht COMMENT ON statements
         String bereinigterInhalt = bereinigeKommentare(inhalt);
