@@ -12,7 +12,7 @@ public class SQLImporter {
     
     public static void main(String[] args) {
         // Properties-Datei laden
-        String configFile = args.length > 0 ? args[0] : "config_sqlimporter.properties";
+        String configFile = args.length > 0 ? args[0] : "config-sqlimporter.properties";
         
         if (!ladeAlleVerbindungen(configFile)) {
             System.err.println("FEHLER: Konnte Konfiguration nicht laden!");
@@ -29,11 +29,11 @@ public class SQLImporter {
         
         Scanner scanner = new Scanner(System.in);
         
-        // Automatisch migriete_daten durchsuchen
+        // Automatisch migrierte_daten durchsuchen
         List<String> migrationOrdner = findeAlleMigrationOrdner();
         
         if (migrationOrdner.isEmpty()) {
-            System.err.println("FEHLER: Keine Migration-Ordner in 'migriete_daten' gefunden!");
+            System.err.println("FEHLER: Keine Migration-Ordner in 'migrierte_daten' gefunden!");
             scanner.close();
             return;
         }
@@ -115,28 +115,23 @@ public class SQLImporter {
         
         // Suche in verschiedenen möglichen Pfaden
         String[] suchPfade = {
-            "migriete_daten",
-            "dbtool-main/migriete_daten", 
-            "dbtool-main\\migriete_daten",
-            "./migriete_daten",
-            "../migriete_daten"
+            "migrierte_daten",
+            "dbtool-main/migrierte_daten", 
+            "dbtool-main\\migrierte_daten",
+            "./migrierte_daten",
+            "../migrierte_daten"
         };
-        
-        System.out.println("INFO: Suche migriete_daten Ordner...");
         
         for (String pfad : suchPfade) {
             File migrieteOrdner = new File(pfad);
-            System.out.println("   Prüfe Verzeichnis: " + migrieteOrdner.getAbsolutePath());
             
             if (migrieteOrdner.exists() && migrieteOrdner.isDirectory()) {
-                System.out.println("   INFO: Verzeichnis gefunden!");
                 
                 File[] unterordner = migrieteOrdner.listFiles(File::isDirectory);
                 if (unterordner != null) {
                     for (File ordner1 : unterordner) {
                         String vollPfad = pfad + File.separator + ordner1.getName();
                         ordner.add(vollPfad);
-                        System.out.println("      -> " + vollPfad);
                     }
                 }
                 break; // Ersten gefundenen Pfad verwenden
@@ -179,7 +174,7 @@ public class SQLImporter {
                 
                 // Prüfe alternative Dateinamen
                 String[] alternativen = {
-                    "config_sqlimporter.properties",
+                    "config-sqlimporter.properties",
                     "sqlimporter-config.properties", 
                     "config.properties"
                 };
@@ -199,24 +194,36 @@ public class SQLImporter {
             props.load(new FileInputStream(file));
             System.out.println("INFO: Konfigurationsdatei erfolgreich geladen: " + configFile);
             
-            // Debug: Zeige alle geladenen Properties
-            System.out.println("DEBUG: Geladene Properties:");
+            // 1. Neue erweiterte postgres.name.url Syntax (mehrere Verbindungen)
             for (String key : props.stringPropertyNames()) {
-                if (key.contains("password") || key.contains("passwort")) {
-                    System.out.println("  " + key + " = ****");
-                } else {
-                    System.out.println("  " + key + " = " + props.getProperty(key));
+                if (key.startsWith("postgres.") && key.endsWith(".url")) {
+                    String verbindungsName = key.substring("postgres.".length(), key.length() - ".url".length());
+                    
+                    String url = props.getProperty("postgres." + verbindungsName + ".url");
+                    String benutzer = props.getProperty("postgres." + verbindungsName + ".benutzer");
+                    String passwort = props.getProperty("postgres." + verbindungsName + ".passwort");
+                    
+                    if (url != null && benutzer != null && passwort != null) {
+                        Properties verbindungProps = new Properties();
+                        verbindungProps.setProperty("url", url);
+                        verbindungProps.setProperty("user", benutzer);
+                        verbindungProps.setProperty("password", passwort);
+                        
+                        verbindungen.put(verbindungsName, verbindungProps);
+                        System.out.println("INFO: PostgreSQL-Verbindung '" + verbindungsName + "' geladen: " + url);
+                    }
                 }
             }
             
-            // Neue einfache Variante: postgres.url, postgres.benutzer, postgres.passwort
+            if (!verbindungen.isEmpty()) {
+                System.out.println("INFO: " + verbindungen.size() + " postgres.*.url Verbindungen gefunden");
+                return true;
+            }
+            
+            // 2. Einfache postgres.* Syntax (eine Verbindung)
             String url = props.getProperty("postgres.url");
             String benutzer = props.getProperty("postgres.benutzer");
             String passwort = props.getProperty("postgres.passwort");
-            
-            System.out.println("DEBUG: postgres.url = " + url);
-            System.out.println("DEBUG: postgres.benutzer = " + benutzer);
-            System.out.println("DEBUG: postgres.passwort = " + (passwort != null ? "****" : null));
             
             if (url != null && benutzer != null && passwort != null) {
                 Properties verbindungProps = new Properties();
@@ -244,6 +251,11 @@ public class SQLImporter {
                     verbindungen.put(verbindungsName, verbindungProps);
                     System.out.println("INFO: Verbindung '" + verbindungsName + "' geladen");
                 }
+            }
+            
+            if (!verbindungen.isEmpty()) {
+                System.out.println("INFO: " + verbindungen.size() + " postgresql.* Verbindungen gefunden");
+                return true;
             }
             
             // Fallback 2: Einfache postgresql.* properties
@@ -320,7 +332,6 @@ public class SQLImporter {
         // Neue Variante: Direkte URL
         String url = props.getProperty("url");
         if (url != null) {
-            System.out.println("INFO: Verbinde zu: " + url);
             return DriverManager.getConnection(url, props.getProperty("user"), props.getProperty("password"));
         }
         
@@ -328,7 +339,6 @@ public class SQLImporter {
         url = "jdbc:postgresql://" + props.getProperty("host") + ":" + 
               props.getProperty("port") + "/" + props.getProperty("database");
         
-        System.out.println("INFO: Verbinde zu: " + url);
         return DriverManager.getConnection(url, props.getProperty("user"), props.getProperty("password"));
     }
     
@@ -361,15 +371,12 @@ public class SQLImporter {
                 continue;
             }
             
-            System.out.println("\nINFO: Verarbeite Ordner: " + ordner);
-            
             File[] sqlDateien = ordnerFile.listFiles((dir, name) -> name.toLowerCase().endsWith(".sql"));
             
             if (sqlDateien != null && sqlDateien.length > 0) {
                 Arrays.sort(sqlDateien);
                 
                 for (File sqlDatei : sqlDateien) {
-                    System.out.println("   INFO: Führe SQL-Datei aus: " + sqlDatei.getName());
                     boolean dateiErfolgreich = fuehreSQLDateiAus(conn, sqlDatei);
                     gesamteDateien++;
                     
@@ -421,8 +428,6 @@ public class SQLImporter {
         String[] statements = bereinigterInhalt.split("(?<!\\\\);"); // nur echtes Semikolon (nicht escaped)
 
         boolean alleStatementsErfolgreich = true;
-        int erfolgreicheStatements = 0;
-        int fehlgeschlageneStatements = 0;
 
         try (Statement stmt = conn.createStatement()) {
             for (String statement : statements) {
@@ -430,25 +435,13 @@ public class SQLImporter {
                 if (!sql.isEmpty()) {
                     try {
                         stmt.execute(sql);
-                        erfolgreicheStatements++;
-                        System.out.println("      INFO: Statement erfolgreich ausgeführt");
                     } catch (SQLException e) {
-                        fehlgeschlageneStatements++;
                         alleStatementsErfolgreich = false;
                         System.err.println("      FEHLER: " + e.getMessage());
-                        System.err.println("      SQL: " + sql.substring(0, Math.min(sql.length(), 100)) + "...");
                         // Optional: throw e; // Um bei Fehler komplett abzubrechen
                     }
                 }
             }
-        }
-        
-        // Zusammenfassung für die Datei ausgeben
-        if (fehlgeschlageneStatements > 0) {
-            System.err.println("   DATEI-ZUSAMMENFASSUNG: " + erfolgreicheStatements + " erfolgreich, " + 
-                             fehlgeschlageneStatements + " fehlgeschlagen");
-        } else {
-            System.out.println("   DATEI-ZUSAMMENFASSUNG: Alle " + erfolgreicheStatements + " Statements erfolgreich");
         }
         
         return alleStatementsErfolgreich;
